@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "appsflyerframework-static",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AppsFlyerSDK/AppsFlyerFramework-Static.git",
+      "state" : {
+        "revision" : "8b763045b2a788e3fd59f1bde7b74d130286da27",
+        "version" : "6.18.1"
+      }
+    }
+  ],
+  "version" : 2
+}
