@@ -2,6 +2,8 @@
 
 This directory contains the Swift Package implementation of the Nexus SDK.
 
+Current release: `0.0.4`
+
 Current status:
 
 - CoreUser implements v7 login, user info, bind account, related products, device id, login config, and AES/CBC encryption.
@@ -46,3 +48,7 @@ In restricted local environments, use:
 CLANG_MODULE_CACHE_PATH=.swift-cache/clang SWIFTPM_CACHE_PATH=.swift-cache/swiftpm swift build --disable-sandbox
 CLANG_MODULE_CACHE_PATH=.swift-cache/clang SWIFTPM_CACHE_PATH=.swift-cache/swiftpm swift test --disable-sandbox
 ```
+
+## Integration Guide
+
+See [iOS business integration guide](docs/ios/business-integration-guide.md).

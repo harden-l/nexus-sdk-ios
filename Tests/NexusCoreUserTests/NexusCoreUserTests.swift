@@ -4,11 +4,24 @@ import XCTest
 final class NexusCoreUserTests: XCTestCase {
     func testVersionAndConfigDefaults() throws {
         let config = try CoreUserConfig(productId: "7", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false)
-        XCTAssertEqual(NexusCoreUser.version, "0.0.3")
+        XCTAssertEqual(NexusCoreUser.version, "0.0.4")
         XCTAssertEqual(config.version.isEmpty, false)
         XCTAssertEqual(config.country.isEmpty, false)
         XCTAssertEqual(config.language.isEmpty, false)
+        XCTAssertEqual(config.accountName, "test")
         XCTAssertNil(config.gt)
+    }
+
+    func testConfigRejectsBlankAccountName() {
+        XCTAssertThrowsError(
+            try CoreUserConfig(
+                productId: "7",
+                productName: "demo",
+                accountName: " ",
+                apiBaseUrl: "https://example.com",
+                encrypt: false
+            )
+        )
     }
 
     func testEncryptionMatchesServerExample() throws {
@@ -31,8 +44,8 @@ final class NexusCoreUserTests: XCTestCase {
         ]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
-        try sdk.logout()
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
 
         let user = try await sdk.silentLogin()
 
@@ -50,8 +63,8 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test-gt", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false, gt: 3), session: session)
-        try sdk.logout()
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-gt", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false, gt: 3), session: session)
+        try sdk.clearLocalSession()
 
         _ = try await sdk.silentLogin()
 
@@ -59,22 +72,80 @@ final class NexusCoreUserTests: XCTestCase {
         XCTAssertEqual(loginBody["gt"] as? Int, 3)
     }
 
-    func testLogoutRetainsUidForNextLogin() async throws {
+    func testGetRelatedProductsSendsAccountNameAndProductId() async throws {
         MockURLProtocol.responses = [
-            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u-retained"}}"#,
-            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u-retained","email":"","phone":"","email_bound":false,"phone_bound":false,"balance":0}}"#
+            "/related_products": #"{"code":1,"message":"success","data":{"list":[{"product_id":8,"product_name":"Related App"}]}}"#
         ]
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test-logout", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        sdk.initialize(
+            config: try CoreUserConfig(
+                productId: "7",
+                productName: "demo",
+                accountName: "app-store-account",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: session
+        )
+
+        let products = try await sdk.getRelatedProducts()
+
+        let body = try XCTUnwrap(MockURLProtocol.requestBodies["/related_products"])
+        XCTAssertEqual(body["product_id"] as? String, "7")
+        XCTAssertEqual(body["account_name"] as? String, "app-store-account")
+        XCTAssertEqual(products.count, 1)
+        XCTAssertEqual(products.first?.productId, "8")
+    }
+
+    func testLogoutRetainsUidForNextLogin() async throws {
+        MockURLProtocol.responses = [
+            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u-retained"}}"#,
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u-retained","email":"","phone":"","email_bound":false,"phone_bound":false,"balance":0}}"#,
+            "/m/v7/coins/deregister": #"{"code":1,"message":"success","data":{}}"#
+        ]
+        MockURLProtocol.requestBodies = [:]
+        let session = URLSession(configuration: .mock)
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-logout", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
 
         _ = try await sdk.silentLogin()
-        try sdk.logout()
+        try await sdk.logout()
         _ = try await sdk.silentLogin()
 
+        let logoutBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/coins/deregister"])
+        XCTAssertEqual(logoutBody["uid"] as? String, "u-retained")
         let loginBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/user/login"])
         XCTAssertEqual(loginBody["uid"] as? String, "u-retained")
+    }
+
+    func testLogoutCompletionReturnsApiError() async throws {
+        MockURLProtocol.responses = [
+            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u-logout-error"}}"#,
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u-logout-error","email":"","phone":"","email_bound":false,"phone_bound":false,"balance":0}}"#,
+            "/m/v7/coins/deregister": #"{"code":0,"message":"logout denied","data":{}}"#
+        ]
+        MockURLProtocol.requestBodies = [:]
+        let session = URLSession(configuration: .mock)
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-logout-error", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
+
+        _ = try await sdk.silentLogin()
+        let expectation = expectation(description: "logout completion")
+        sdk.logout { result in
+            switch result {
+            case .success:
+                XCTFail("Expected logout failure")
+            case .failure(let error):
+                XCTAssertEqual(error.localizedDescription, "logout denied")
+            }
+            expectation.fulfill()
+        }
+        await fulfillment(of: [expectation], timeout: 5)
+        XCTAssertEqual(try sdk.getCurrentUser()?.uid, "u-logout-error")
     }
 
     func testConsumeChatCoinsSendsRequestAndParsesResult() async throws {
@@ -86,8 +157,8 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
-        try sdk.logout()
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
 
         _ = try await sdk.silentLogin()
         let result = try await sdk.consumeChatCoins(cost: 2.5, remark: "chat billing")
@@ -113,8 +184,8 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume-completion", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
-        try sdk.logout()
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume-completion", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
 
         _ = try await sdk.silentLogin()
         let expectation = expectation(description: "consume completion")
@@ -142,8 +213,8 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
-        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume-error", productName: "demo", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
-        try sdk.logout()
+        sdk.initialize(config: try CoreUserConfig(productId: "core-test-consume-error", productName: "demo", accountName: "test-account", apiBaseUrl: "https://unit.test", encrypt: false), session: session)
+        try sdk.clearLocalSession()
 
         _ = try await sdk.silentLogin()
         do {

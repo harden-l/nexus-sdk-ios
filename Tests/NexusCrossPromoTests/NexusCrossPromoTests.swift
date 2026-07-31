@@ -6,8 +6,8 @@ import NexusGrowthAnalyticsAd
 final class NexusCrossPromoTests: XCTestCase {
     func testIncomingLinkAndFlushUserLink() throws {
         let core = NexusCoreUser.shared
-        core.initialize(config: try CoreUserConfig(productId: "target", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false))
-        try core.logout()
+        core.initialize(config: try CoreUserConfig(productId: "target", productName: "demo", accountName: "test-account", apiBaseUrl: "https://example.com", encrypt: false))
+        try core.clearLocalSession()
         let storageUser = SDKUser(uid: "target-uid", deviceId: try core.getDeviceId(), email: "user@example.com")
         let mirror = Mirror(reflecting: core)
         XCTAssertNotNil(mirror)

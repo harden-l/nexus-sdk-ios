@@ -116,8 +116,20 @@ final class CoreUserAPI: @unchecked Sendable {
         )
     }
 
+    func logout(uid: String) async throws {
+        let response = try await post(path: "/m/v7/coins/deregister", values: ["uid": uid])
+        let root = try JSONObject.decodeObject(response)
+        if let code = JSONObject.int(root, key: "code"), code != 1 {
+            throw CoreUserError.apiError(JSONObject.string(root, keys: "message") ?? "Logout failed")
+        }
+    }
+
     func getRelatedProducts() async throws -> [RelatedProduct] {
-        let response = try await post(path: "/m/v7/product/related_products", values: ["product_id": config.productId])
+        let values: [String: Any?] = [
+            "product_id": config.productId,
+            "account_name": config.accountName
+        ]
+        let response = try await post(path: "/related_products", values: values)
         let root = try JSONObject.decodeObject(response)
         let array = (root["data"] as? [[String: Any]])
             ?? ((root["data"] as? [String: Any])?["list"] as? [[String: Any]])

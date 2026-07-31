@@ -21,7 +21,7 @@ final class NexusPaymentTests: XCTestCase {
 
     func testMockPurchaseGrantsEntitlement() async throws {
         let core = NexusCoreUser.shared
-        core.initialize(config: try CoreUserConfig(productId: "pay-test", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false))
+        core.initialize(config: try CoreUserConfig(productId: "pay-test", productName: "demo", accountName: "test-account", apiBaseUrl: "https://example.com", encrypt: false))
         UserDefaults.standard.set(
             try JSONEncoder().encode(SDKUser(uid: "pay-user", deviceId: try core.getDeviceId())),
             forKey: "nexus.coreuser.pay-test.user"

@@ -21,6 +21,7 @@ public struct CoreUserConfig: Codable, Equatable, Sendable {
     public var appId: String
     public var productId: String
     public var productName: String
+    public var accountName: String
     public var apiBaseUrl: String
     public var version: String
     public var country: String
@@ -34,6 +35,7 @@ public struct CoreUserConfig: Codable, Equatable, Sendable {
         appId: String = "",
         productId: String,
         productName: String,
+        accountName: String = "test",
         apiBaseUrl: String,
         version: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0",
         country: String = "",
@@ -44,6 +46,9 @@ public struct CoreUserConfig: Codable, Equatable, Sendable {
         gt: Int? = nil
     ) throws {
         guard !productId.isEmpty else { throw CoreUserError.invalidConfig("productId is required") }
+        guard !accountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CoreUserError.invalidConfig("accountName is required")
+        }
         guard !apiBaseUrl.isEmpty else { throw CoreUserError.invalidConfig("apiBaseUrl is required") }
         if encrypt {
             guard let encryptionKey, !encryptionKey.isEmpty else {
@@ -56,6 +61,7 @@ public struct CoreUserConfig: Codable, Equatable, Sendable {
         self.appId = appId
         self.productId = productId
         self.productName = productName
+        self.accountName = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiBaseUrl = apiBaseUrl
         self.version = version.isEmpty ? "1.0.0" : version
         self.country = country.isEmpty ? CoreUserConfigDefaults.country : country

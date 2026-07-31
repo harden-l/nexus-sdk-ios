@@ -5,7 +5,7 @@ import UIKit
 
 public final class NexusCoreUser: @unchecked Sendable {
     public static let shared = NexusCoreUser()
-    public static let version = "0.0.3"
+    public static let version = "0.0.4"
 
     private var config: CoreUserConfig?
     private var storage: CoreUserStorage?
@@ -198,8 +198,30 @@ public final class NexusCoreUser: @unchecked Sendable {
         try await requireAPI().getRelatedProducts()
     }
 
-    public func logout() throws {
+    public func logout() async throws {
         let storage = try requireStorage()
+        if let uid = storage.getUser()?.uid, !uid.isEmpty {
+            try await requireAPI().logout(uid: uid)
+        }
+        clearLocalSession(storage: storage)
+    }
+
+    public func logout(completion: @escaping @Sendable (CoreUserResult<Void>) -> Void) {
+        Task {
+            do {
+                try await logout()
+                completion(.success(()))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    public func clearLocalSession() throws {
+        clearLocalSession(storage: try requireStorage())
+    }
+
+    private func clearLocalSession(storage: CoreUserStorage) {
         storage.clearUser()
         storage.clearLoginConfig()
     }

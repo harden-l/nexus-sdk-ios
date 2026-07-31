@@ -389,6 +389,7 @@ final class NexusProviderDemoViewController: UIViewController {
         try CoreUserConfig(
             productId: trimmedText(productIdField, fallback: "7"),
             productName: trimmedText(productNameField, fallback: "TEST PRODUCT"),
+            accountName: "test",
             apiBaseUrl: trimmedText(apiBaseUrlField, fallback: "https://serverlf.stoahayaamhsothy.com/"),
             encrypt: encryptSwitch.isOn,
             encryptionKey: trimmedOptionalText(encryptionKeyField),
@@ -532,11 +533,15 @@ final class NexusProviderDemoViewController: UIViewController {
     }
 
     @objc private func logoutTapped() {
-        do {
-            try NexusCoreUser.shared.logout()
-            append("Logout success: cleared cached user details and login config; uid retained for next login")
-        } catch {
-            append("Logout failed: \(error.localizedDescription)")
+        Task {
+            do {
+                try await NexusCoreUser.shared.logout()
+                await MainActor.run {
+                    append("Logout success: server deregistered, cached user details and login config cleared; uid retained for next login")
+                }
+            } catch {
+                await MainActor.run { append("Logout failed: \(error.localizedDescription)") }
+            }
         }
     }
 
