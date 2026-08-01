@@ -127,10 +127,10 @@
 			mainGroup = 00000000000000000000000D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */,
-				00000000000000000000002A /* XCLocalSwiftPackageReference "../../Adapters/FirebaseProvider" */,
-				00000000000000000000002B /* XCLocalSwiftPackageReference "../../Adapters/AppsFlyerProvider" */,
-				00000000000000000000002C /* XCLocalSwiftPackageReference "../../Adapters/AdMobProvider" */,
+				000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */,
+				00000000000000000000002A /* XCRemoteSwiftPackageReference "nexus-sdk-ios-firebase-provider" */,
+				00000000000000000000002B /* XCRemoteSwiftPackageReference "nexus-sdk-ios-appsflyer-provider" */,
+				00000000000000000000002C /* XCRemoteSwiftPackageReference "nexus-sdk-ios-admob-provider" */,
 			);
 			preferredProjectObjectVersion = 60;
 			productRefGroup = 00000000000000000000000F /* Products */;
@@ -341,64 +341,80 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../..";
+/* Begin XCRemoteSwiftPackageReference section */
+		000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/harden-l/nexus-sdk-ios.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.5;
+			};
 		};
-		00000000000000000000002A /* XCLocalSwiftPackageReference "../../Adapters/FirebaseProvider" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../Adapters/FirebaseProvider";
+		00000000000000000000002A /* XCRemoteSwiftPackageReference "nexus-sdk-ios-firebase-provider" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.5;
+			};
 		};
-		00000000000000000000002B /* XCLocalSwiftPackageReference "../../Adapters/AppsFlyerProvider" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../Adapters/AppsFlyerProvider";
+		00000000000000000000002B /* XCRemoteSwiftPackageReference "nexus-sdk-ios-appsflyer-provider" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.5;
+			};
 		};
-		00000000000000000000002C /* XCLocalSwiftPackageReference "../../Adapters/AdMobProvider" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../Adapters/AdMobProvider";
+		00000000000000000000002C /* XCRemoteSwiftPackageReference "nexus-sdk-ios-admob-provider" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.5;
+			};
 		};
-/* End XCLocalSwiftPackageReference section */
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		000000000000000000000004 /* NexusCoreUser */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */;
+			package = 000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */;
 			productName = NexusCoreUser;
 		};
 		000000000000000000000006 /* NexusGrowthAnalyticsAd */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */;
+			package = 000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */;
 			productName = NexusGrowthAnalyticsAd;
 		};
 		000000000000000000000008 /* NexusPayment */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */;
+			package = 000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */;
 			productName = NexusPayment;
 		};
 		00000000000000000000000A /* NexusCrossPromo */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */;
+			package = 000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */;
 			productName = NexusCrossPromo;
 		};
 		000000000000000000000022 /* NexusGrowthAnalyticsAdDataEye */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 000000000000000000000016 /* XCLocalSwiftPackageReference "../.." */;
+			package = 000000000000000000000016 /* XCRemoteSwiftPackageReference "nexus-sdk-ios" */;
 			productName = NexusGrowthAnalyticsAdDataEye;
 		};
 		000000000000000000000025 /* NexusGrowthAnalyticsAdFirebase */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 00000000000000000000002A /* XCLocalSwiftPackageReference "../../Adapters/FirebaseProvider" */;
+			package = 00000000000000000000002A /* XCRemoteSwiftPackageReference "nexus-sdk-ios-firebase-provider" */;
 			productName = NexusGrowthAnalyticsAdFirebase;
 		};
 		000000000000000000000027 /* NexusGrowthAnalyticsAdAppsFlyer */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 00000000000000000000002B /* XCLocalSwiftPackageReference "../../Adapters/AppsFlyerProvider" */;
+			package = 00000000000000000000002B /* XCRemoteSwiftPackageReference "nexus-sdk-ios-appsflyer-provider" */;
 			productName = NexusGrowthAnalyticsAdAppsFlyer;
 		};
 		000000000000000000000029 /* NexusGrowthAnalyticsAdAdMob */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 00000000000000000000002C /* XCLocalSwiftPackageReference "../../Adapters/AdMobProvider" */;
+			package = 00000000000000000000002C /* XCRemoteSwiftPackageReference "nexus-sdk-ios-admob-provider" */;
 			productName = NexusGrowthAnalyticsAdAdMob;
 		};
 /* End XCSwiftPackageProductDependency section */

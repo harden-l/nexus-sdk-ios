@@ -30,11 +30,13 @@ public protocol PaymentProvider: AnyObject, Sendable {
     var requiresServerVerification: Bool { get }
     func getProducts(productIds: [String]) async throws -> [Product]
     func purchase(request: PurchaseRequest) async throws -> ProviderPurchaseResult
+    func completePurchase(_ result: ProviderPurchaseResult) async
     func restore() async throws -> RestoreResult
 }
 
 public extension PaymentProvider {
     func getProducts(productIds: [String]) async throws -> [Product] { [] }
+    func completePurchase(_ result: ProviderPurchaseResult) async {}
     func restore() async throws -> RestoreResult { RestoreResult(channel: channel, purchases: [], message: nil) }
 }
 
@@ -86,6 +88,7 @@ public final class AppStorePaymentProvider: PaymentProvider, @unchecked Sendable
     public let channel: PaymentChannel = .appStore
     public let requiresServerVerification = true
     private var updatesTask: Task<Void, Never>?
+    private var pendingTransactions: [UInt64: Transaction] = [:]
     public init() {}
     deinit {
         updatesTask?.cancel()
@@ -128,7 +131,7 @@ public final class AppStorePaymentProvider: PaymentProvider, @unchecked Sendable
         case .success(let verification):
             let transaction = try checkVerified(verification)
             let signedTransactionInfo = verification.jwsRepresentation
-            await transaction.finish()
+            pendingTransactions[transaction.id] = transaction
             return ProviderPurchaseResult(
                 channel: channel,
                 product: request.product,
@@ -183,6 +186,13 @@ public final class AppStorePaymentProvider: PaymentProvider, @unchecked Sendable
         }
     }
 
+    public func completePurchase(_ result: ProviderPurchaseResult) async {
+        guard let transactionId = result.rawData["transaction_id"]?.value as? UInt64,
+              let transaction = pendingTransactions.removeValue(forKey: transactionId)
+        else { return }
+        await transaction.finish()
+    }
+
     public func restore() async throws -> RestoreResult {
         var purchases: [ProviderPurchaseResult] = []
         for await verification in Transaction.currentEntitlements {
@@ -212,7 +222,7 @@ public final class AppStorePaymentProvider: PaymentProvider, @unchecked Sendable
         return RestoreResult(channel: channel, purchases: purchases, message: nil)
     }
 
-    public func observeTransactions(_ handler: @escaping @Sendable (ProviderPurchaseResult) async -> Void) {
+    public func observeTransactions(_ handler: @escaping @Sendable (ProviderPurchaseResult) async -> Bool) {
         updatesTask?.cancel()
         updatesTask = Task {
             for await verification in Transaction.updates {
@@ -228,8 +238,10 @@ public final class AppStorePaymentProvider: PaymentProvider, @unchecked Sendable
                         ),
                         message: transaction.revocationDate == nil ? "Transaction updated" : "Transaction revoked"
                     )
-                    await handler(result)
-                    await transaction.finish()
+                    if await handler(result) {
+                        pendingTransactions.removeValue(forKey: transaction.id)
+                        await transaction.finish()
+                    }
                 } catch {
                     continue
                 }

@@ -33,6 +33,8 @@ public struct PaymentConfig: Equatable, Sendable {
         guard !platform.isEmpty else { throw PaymentError.invalidConfig("platform is required") }
         guard !enabledChannels.isEmpty else { throw PaymentError.invalidConfig("enabledChannels is required") }
         guard enabledChannels.contains(defaultChannel) else { throw PaymentError.invalidConfig("defaultChannel must be included in enabledChannels") }
+        guard Set(enabledChannels).count == enabledChannels.count else { throw PaymentError.invalidConfig("enabledChannels contains duplicates") }
+        guard fallbackChannels.allSatisfy(enabledChannels.contains) else { throw PaymentError.invalidConfig("fallbackChannels must be included in enabledChannels") }
         self.productId = productId
         self.platform = platform
         self.country = country
@@ -55,6 +57,8 @@ public struct PaymentRule: Equatable, Sendable {
     public init(country: String? = nil, platform: String? = nil, minVersion: String? = nil, enabledChannels: [PaymentChannel], defaultChannel: PaymentChannel, fallbackChannels: [PaymentChannel] = []) throws {
         guard !enabledChannels.isEmpty else { throw PaymentError.invalidConfig("rule enabledChannels is required") }
         guard enabledChannels.contains(defaultChannel) else { throw PaymentError.invalidConfig("rule defaultChannel must be included in enabledChannels") }
+        guard Set(enabledChannels).count == enabledChannels.count else { throw PaymentError.invalidConfig("rule enabledChannels contains duplicates") }
+        guard fallbackChannels.allSatisfy(enabledChannels.contains) else { throw PaymentError.invalidConfig("rule fallbackChannels must be included in enabledChannels") }
         self.country = country
         self.platform = platform
         self.minVersion = minVersion
@@ -121,7 +125,7 @@ public struct Product: Equatable, Codable, Sendable {
     }
 }
 
-public struct Entitlement: Equatable, Sendable {
+public struct Entitlement: Equatable, Codable, Sendable {
     public var entitlementId: String
     public var productId: String
     public var orderId: String

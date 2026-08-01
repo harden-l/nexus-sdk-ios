@@ -93,23 +93,29 @@ public extension AdProvider {
 }
 
 public final class MockAdProvider: AdProvider, @unchecked Sendable {
-    private var loadedPlacements = Set<String>()
+    private var loadedAds = Set<MockAdCacheKey>()
 
     public init() {}
     public func loadAd(_ placement: AdPlacement, callbacks: AdCallbacks?) {
-        loadedPlacements.insert(placement.placement)
+        loadedAds.insert(placement.mockCacheKey)
         callbacks?.onLoaded(placement)
     }
 
     public func showAd(_ placement: AdPlacement, callbacks: AdCallbacks?) {
-        if !loadedPlacements.contains(placement.placement) {
-            loadAd(placement, callbacks: callbacks)
+        guard loadedAds.remove(placement.mockCacheKey) != nil else {
+            loadAd(placement, callbacks: nil)
+            callbacks?.onFailed(
+                placement,
+                error: GrowthAnalyticsError.providerUnsupported("Ad is not loaded")
+            )
+            return
         }
         callbacks?.onShown(placement)
-        callbacks?.onClosed(placement)
-        if placement.format == .appOpen || placement.format == .interstitial || placement.format == .rewardedInterstitial {
-            loadAd(placement, callbacks: nil)
+        if placement.format == .rewarded || placement.format == .rewardedInterstitial {
+            callbacks?.onReward(placement)
         }
+        callbacks?.onClosed(placement)
+        loadAd(placement, callbacks: nil)
     }
 
     #if canImport(UIKit)
@@ -122,6 +128,17 @@ public final class MockAdProvider: AdProvider, @unchecked Sendable {
         callbacks?.onLoaded(placement, nativeAd: ["placement": placement.placement])
     }
     #endif
+}
+
+private struct MockAdCacheKey: Hashable {
+    let format: String
+    let adUnitId: String
+}
+
+private extension AdPlacement {
+    var mockCacheKey: MockAdCacheKey {
+        MockAdCacheKey(format: format.rawValue, adUnitId: adUnitId)
+    }
 }
 
 public final class AdFrequencyController: @unchecked Sendable {

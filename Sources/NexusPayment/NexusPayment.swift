@@ -7,7 +7,7 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.4"
+    public static let version = "0.0.5"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]
@@ -17,15 +17,19 @@ public final class NexusPayment: @unchecked Sendable {
     private var relatedProducts: [RelatedProduct] = []
     private var useTestingProducts = false
     private var useTestingRelatedProducts = false
-    private var entitlements: [String: Entitlement] = [:]
-    private var deliveredOrderIds = Set<String>()
-    private var subscriptionPageCallbacks: [(SubscriptionPageEvent) -> Void] = []
+    private let entitlementLock = NSLock()
+    private var subscriptionPageCallbacks: [UUID: (SubscriptionPageEvent) -> Void] = [:]
+    private var activeSubscriptionPageConfig: SubscriptionPageConfig?
     private weak var subscriptionPageViewController: AnyObject?
 
     private init() {}
 
     public func initialize(config: PaymentConfig) {
         self.config = config
+        products.removeAll()
+        relatedProducts.removeAll()
+        useTestingProducts = false
+        useTestingRelatedProducts = false
         self.orderVerificationAPI = try? OrderVerificationAPI(config: NexusCoreUser.shared.getSdkConfig())
         providers.removeAll()
         registerProvider(MockPaymentProvider())
@@ -35,7 +39,6 @@ public final class NexusPayment: @unchecked Sendable {
         registerProvider(ThirdPartyPaymentProvider(channel: .stripe))
         registerProvider(ThirdPartyPaymentProvider(channel: .paypal))
         registerProvider(ThirdPartyPaymentProvider(channel: .webCheckout))
-        deliveredOrderIds.removeAll()
         observeAppStoreTransactions(appStoreProvider)
     }
 
@@ -49,10 +52,7 @@ public final class NexusPayment: @unchecked Sendable {
 
     public func resolvePaymentChannel(context: PaymentContext = PaymentContext()) throws -> ResolvedPaymentChannels {
         let config = try requireConfig()
-        if let rule = config.rules.first(where: { rule in
-            (rule.country == nil || rule.country == context.country) &&
-            (rule.platform == nil || rule.platform == context.platform)
-        }) {
+        if let rule = config.rules.first(where: { paymentRule($0, matches: context) }) {
             return ResolvedPaymentChannels(defaultChannel: rule.defaultChannel, enabledChannels: rule.enabledChannels, fallbackChannels: rule.fallbackChannels, matchedRule: rule)
         }
         return ResolvedPaymentChannels(defaultChannel: config.defaultChannel, enabledChannels: config.enabledChannels, fallbackChannels: config.fallbackChannels, matchedRule: nil)
@@ -123,7 +123,15 @@ public final class NexusPayment: @unchecked Sendable {
                 verification: verification
             )
         }
-        let entitlement = grant(product: product, orderId: orderId, channel: providerResult.channel, verification: verification)
+        await provider.completePurchase(providerResult)
+        let entitlement = grant(
+            product: product,
+            orderId: orderId,
+            deliveryId: deliveryId(for: providerResult),
+            channel: providerResult.channel,
+            verification: verification,
+            uid: uid
+        )
         if let entitlement {
             reportPurchaseRevenue(product: product, orderId: orderId, channel: providerResult.channel, verification: verification)
             return PurchaseResult(channel: providerResult.channel, product: product, success: true, orderId: orderId, message: providerResult.message, verification: verification, entitlement: entitlement)
@@ -140,29 +148,47 @@ public final class NexusPayment: @unchecked Sendable {
         for purchase in result.purchases where purchase.success {
             guard let orderId = purchase.orderId else { continue }
             let verification = try await verifyProviderPurchaseIfNeeded(provider: provider, result: purchase, uid: uid)
-            if verification.isSuccessful, let entitlement = grant(product: purchase.product, orderId: orderId, channel: purchase.channel, verification: verification) {
-                reportPurchaseRevenue(product: purchase.product, orderId: orderId, channel: purchase.channel, verification: verification)
-                _ = entitlement
+            if verification.isSuccessful {
+                await provider.completePurchase(purchase)
+                if let entitlement = grant(
+                    product: purchase.product,
+                    orderId: orderId,
+                    deliveryId: deliveryId(for: purchase),
+                    channel: purchase.channel,
+                    verification: verification,
+                    uid: uid
+                ) {
+                    reportPurchaseRevenue(product: purchase.product, orderId: orderId, channel: purchase.channel, verification: verification)
+                    _ = entitlement
+                }
             }
         }
         return result
     }
 
     public func getEntitlements() -> [Entitlement] {
-        Array(entitlements.values)
+        do {
+            guard let uid = try NexusCoreUser.shared.getCurrentUser()?.uid else { return [] }
+            return Array(loadEntitlementState(uid: uid).entitlements.values)
+        } catch {
+            return []
+        }
     }
 
     public func showSubscriptionPage(config: SubscriptionPageConfig) {
-        dispatchSubscriptionPageEvent(SubscriptionPageEvent(name: .pageShow, state: .ready, params: ["template_id": config.templateId, "scene": config.scene]))
+        activeSubscriptionPageConfig = config
+        dispatchSubscriptionPageEvent(pageEvent(name: .pageShow, state: .ready))
     }
 
     #if canImport(UIKit)
     public func showSubscriptionPage(presenting viewController: UIViewController, config: SubscriptionPageConfig) {
-        dispatchSubscriptionPageEvent(SubscriptionPageEvent(name: .pageShow, state: .loading, params: ["template_id": config.templateId, "scene": config.scene]))
+        activeSubscriptionPageConfig = config
+        dispatchSubscriptionPageEvent(pageEvent(name: .pageShow, state: .loading))
         let page = SubscriptionPageViewController(sdk: self, config: config)
         subscriptionPageViewController = page
         let navigation = UINavigationController(rootViewController: page)
         navigation.modalPresentationStyle = .formSheet
+        navigation.presentationController?.delegate = page
         viewController.present(navigation, animated: true)
     }
     #endif
@@ -172,43 +198,53 @@ public final class NexusPayment: @unchecked Sendable {
         (subscriptionPageViewController as? UIViewController)?.dismiss(animated: true)
         subscriptionPageViewController = nil
         #endif
-        dispatchSubscriptionPageEvent(SubscriptionPageEvent(name: .close, state: .cancelled))
+        dispatchSubscriptionPageEvent(pageEvent(name: .close, state: .cancelled))
+        activeSubscriptionPageConfig = nil
     }
 
     @discardableResult
     public func onSubscriptionPageEvent(_ callback: @escaping (SubscriptionPageEvent) -> Void) -> () -> Void {
-        subscriptionPageCallbacks.append(callback)
-        let index = subscriptionPageCallbacks.count - 1
+        let id = UUID()
+        subscriptionPageCallbacks[id] = callback
         return { [weak self] in
-            guard let self, self.subscriptionPageCallbacks.indices.contains(index) else { return }
-            self.subscriptionPageCallbacks.remove(at: index)
+            self?.subscriptionPageCallbacks.removeValue(forKey: id)
         }
     }
 
     private func mergeProviderProducts(_ apiProducts: [Product]) async throws -> [Product] {
-        var merged = apiProducts
-        for provider in providers.values {
-            let providerProducts = try await provider.getProducts(productIds: apiProducts.map(\.marketProductId))
-            for providerProduct in providerProducts {
-                if let index = merged.firstIndex(where: { $0.marketProductId == providerProduct.marketProductId }) {
-                    let apiProduct = merged[index]
-                    merged[index] = Product(
-                        marketProductId: apiProduct.marketProductId,
-                        name: providerProduct.name.isEmpty ? apiProduct.name : providerProduct.name,
-                        description: apiProduct.description.isEmpty ? providerProduct.description : apiProduct.description,
-                        productType: apiProduct.productType == .unknown ? providerProduct.productType : apiProduct.productType,
-                        coinsGranted: apiProduct.coinsGranted,
-                        price: providerProduct.price ?? apiProduct.price,
-                        currency: providerProduct.currency ?? apiProduct.currency,
-                        localizedPrice: providerProduct.localizedPrice ?? apiProduct.localizedPrice,
-                        subscriptionPeriod: providerProduct.subscriptionPeriod ?? apiProduct.subscriptionPeriod,
-                        trialPeriod: providerProduct.trialPeriod ?? apiProduct.trialPeriod,
-                        hasTrial: apiProduct.hasTrial || providerProduct.hasTrial,
-                        entitlementId: apiProduct.entitlementId,
-                        benefits: apiProduct.benefits
-                    )
-                }
-            }
+        let paymentConfig = try requireConfig()
+        let requestedChannels = activeSubscriptionPageConfig?.paymentChannels.isEmpty == false
+            ? activeSubscriptionPageConfig!.paymentChannels
+            : paymentConfig.enabledChannels
+        guard requestedChannels.contains(.appStore) else { return apiProducts }
+        guard let provider = appStoreProvider else {
+            throw PaymentError.providerNotRegistered("App Store payment provider is not registered")
+        }
+        let providerProducts = try await provider.getProducts(productIds: apiProducts.map(\.marketProductId))
+        guard !providerProducts.isEmpty else {
+            throw PaymentError.apiError("No configured products are available from the App Store")
+        }
+        let providerProductsById = Dictionary(uniqueKeysWithValues: providerProducts.map { ($0.marketProductId, $0) })
+        let merged = apiProducts.compactMap { apiProduct -> Product? in
+            guard let providerProduct = providerProductsById[apiProduct.marketProductId] else { return nil }
+            return Product(
+                marketProductId: apiProduct.marketProductId,
+                name: providerProduct.name.isEmpty ? apiProduct.name : providerProduct.name,
+                description: apiProduct.description.isEmpty ? providerProduct.description : apiProduct.description,
+                productType: apiProduct.productType == .unknown ? providerProduct.productType : apiProduct.productType,
+                coinsGranted: apiProduct.coinsGranted,
+                price: providerProduct.price ?? apiProduct.price,
+                currency: providerProduct.currency ?? apiProduct.currency,
+                localizedPrice: providerProduct.localizedPrice ?? apiProduct.localizedPrice,
+                subscriptionPeriod: providerProduct.subscriptionPeriod ?? apiProduct.subscriptionPeriod,
+                trialPeriod: providerProduct.trialPeriod ?? apiProduct.trialPeriod,
+                hasTrial: apiProduct.hasTrial || providerProduct.hasTrial,
+                entitlementId: apiProduct.entitlementId,
+                benefits: apiProduct.benefits
+            )
+        }
+        guard !merged.isEmpty else {
+            throw PaymentError.apiError("Nexus products do not match any App Store products")
         }
         return merged
     }
@@ -278,8 +314,18 @@ public final class NexusPayment: @unchecked Sendable {
         }
     }
 
-    private func grant(product: Product, orderId: String, channel: PaymentChannel, verification: OrderVerificationResult?) -> Entitlement? {
-        guard deliveredOrderIds.insert(orderId).inserted else { return nil }
+    private func grant(
+        product: Product,
+        orderId: String,
+        deliveryId: String,
+        channel: PaymentChannel,
+        verification: OrderVerificationResult?,
+        uid: String
+    ) -> Entitlement? {
+        entitlementLock.lock()
+        defer { entitlementLock.unlock() }
+        var state = loadEntitlementStateUnlocked(uid: uid)
+        guard state.deliveredOrderIds.insert(deliveryId).inserted else { return nil }
         let entitlement = Entitlement(
             entitlementId: product.entitlementId ?? product.marketProductId,
             productId: product.marketProductId,
@@ -289,13 +335,17 @@ public final class NexusPayment: @unchecked Sendable {
             endsTime: verification?.endsTime,
             active: verification?.isSuccessful ?? true
         )
-        entitlements[entitlement.entitlementId] = entitlement
+        state.entitlements[entitlement.entitlementId] = entitlement
+        saveEntitlementStateUnlocked(state, uid: uid)
         return entitlement
     }
 
-    private func revoke(product: Product, orderId: String, channel: PaymentChannel, verification: OrderVerificationResult?) {
+    private func revoke(product: Product, orderId: String, channel: PaymentChannel, verification: OrderVerificationResult?, uid: String) {
+        entitlementLock.lock()
+        defer { entitlementLock.unlock() }
+        var state = loadEntitlementStateUnlocked(uid: uid)
         let entitlementId = product.entitlementId ?? product.marketProductId
-        entitlements[entitlementId] = Entitlement(
+        state.entitlements[entitlementId] = Entitlement(
             entitlementId: entitlementId,
             productId: product.marketProductId,
             orderId: orderId,
@@ -304,22 +354,37 @@ public final class NexusPayment: @unchecked Sendable {
             endsTime: verification?.endsTime,
             active: false
         )
+        saveEntitlementStateUnlocked(state, uid: uid)
     }
 
     private func observeAppStoreTransactions(_ provider: AppStorePaymentProvider) {
         provider.observeTransactions { [weak self] providerResult in
-            guard let self else { return }
+            guard let self else { return false }
             do {
                 let uid = try await self.currentUid()
-                guard let orderId = providerResult.orderId else { return }
+                guard let orderId = providerResult.orderId else { return false }
                 let verification = try await self.verifyProviderPurchaseIfNeeded(provider: provider, result: providerResult, uid: uid)
                 if verification.isSuccessful {
-                    if let entitlement = self.grant(product: providerResult.product, orderId: orderId, channel: providerResult.channel, verification: verification) {
+                    if let entitlement = self.grant(
+                        product: providerResult.product,
+                        orderId: orderId,
+                        deliveryId: self.deliveryId(for: providerResult),
+                        channel: providerResult.channel,
+                        verification: verification,
+                        uid: uid
+                    ) {
                         self.reportPurchaseRevenue(product: providerResult.product, orderId: orderId, channel: providerResult.channel, verification: verification)
                         _ = entitlement
                     }
+                    return true
                 } else if verification.status == .cancelled || verification.status == .refunded || !providerResult.success {
-                    self.revoke(product: providerResult.product, orderId: orderId, channel: providerResult.channel, verification: verification)
+                    self.revoke(
+                        product: providerResult.product,
+                        orderId: orderId,
+                        channel: providerResult.channel,
+                        verification: verification,
+                        uid: uid
+                    )
                     self.dispatchSubscriptionPageEvent(SubscriptionPageEvent(
                         name: .purchaseFailed,
                         productId: providerResult.product.marketProductId,
@@ -327,7 +392,9 @@ public final class NexusPayment: @unchecked Sendable {
                         state: .failed,
                         params: ["order_id": orderId, "status": verification.status.rawValue, "message": providerResult.message]
                     ))
+                    return true
                 }
+                return false
             } catch {
                 self.dispatchSubscriptionPageEvent(SubscriptionPageEvent(
                     name: .purchaseFailed,
@@ -336,12 +403,13 @@ public final class NexusPayment: @unchecked Sendable {
                     state: .failed,
                     params: ["message": error.localizedDescription]
                 ))
+                return false
             }
         }
     }
 
     func dispatchSubscriptionPageEvent(_ event: SubscriptionPageEvent) {
-        subscriptionPageCallbacks.forEach { $0(event) }
+        subscriptionPageCallbacks.values.forEach { $0(event) }
         if NexusGrowthAnalyticsAd.shared.isInitialized() {
             _ = try? NexusGrowthAnalyticsAd.shared.reportPurchaseEvent(event.name.rawValue, payload: event.analyticsParams())
         }
@@ -351,6 +419,100 @@ public final class NexusPayment: @unchecked Sendable {
         guard let config else { throw PaymentError.notInitialized }
         return config
     }
+
+    func subscriptionPageWasDismissed() {
+        subscriptionPageViewController = nil
+        activeSubscriptionPageConfig = nil
+    }
+
+    func deliveryId(for result: ProviderPurchaseResult) -> String {
+        if let value = result.rawData["transaction_id"]?.value as? UInt64 {
+            return String(value)
+        }
+        if let value = result.rawData["transaction_id"]?.value as? NSNumber {
+            return value.stringValue
+        }
+        if let value = result.rawData["transaction_id"]?.value as? String, !value.isEmpty {
+            return value
+        }
+        return result.orderId ?? result.purchaseToken ?? result.platformProductId
+    }
+
+    private func loadEntitlementState(uid: String) -> PersistedEntitlementState {
+        entitlementLock.lock()
+        defer { entitlementLock.unlock() }
+        return loadEntitlementStateUnlocked(uid: uid)
+    }
+
+    private func loadEntitlementStateUnlocked(uid: String) -> PersistedEntitlementState {
+        guard let data = UserDefaults.standard.data(forKey: entitlementStorageKey(uid: uid)),
+              let state = try? JSONDecoder().decode(PersistedEntitlementState.self, from: data)
+        else { return PersistedEntitlementState() }
+        return state
+    }
+
+    private func saveEntitlementStateUnlocked(_ state: PersistedEntitlementState, uid: String) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: entitlementStorageKey(uid: uid))
+    }
+
+    private func entitlementStorageKey(uid: String) -> String {
+        "nexus.payment.\(config?.productId ?? "unknown").entitlements.\(uid)"
+    }
+
+    private func pageEvent(
+        name: SubscriptionPageEventName,
+        productId: String? = nil,
+        paymentChannel: PaymentChannel? = nil,
+        state: SubscriptionPageState? = nil,
+        params: [String: Any?] = [:]
+    ) -> SubscriptionPageEvent {
+        var values = params
+        if let config = activeSubscriptionPageConfig {
+            values["template_id"] = config.templateId
+            values["scene"] = config.scene
+        }
+        return SubscriptionPageEvent(
+            name: name,
+            productId: productId,
+            paymentChannel: paymentChannel,
+            state: state,
+            params: values
+        )
+    }
+
+    private func paymentRule(_ rule: PaymentRule, matches context: PaymentContext) -> Bool {
+        if let country = rule.country,
+           country.caseInsensitiveCompare(context.country ?? "") != .orderedSame {
+            return false
+        }
+        if let platform = rule.platform,
+           platform.caseInsensitiveCompare(context.platform) != .orderedSame {
+            return false
+        }
+        if let minimumVersion = rule.minVersion,
+           let appVersion = context.appVersion,
+           compareVersions(appVersion, minimumVersion) < 0 {
+            return false
+        }
+        return true
+    }
+
+    private func compareVersions(_ left: String, _ right: String) -> Int {
+        let leftParts = left.split(separator: ".").map { Int($0) ?? 0 }
+        let rightParts = right.split(separator: ".").map { Int($0) ?? 0 }
+        for index in 0..<max(leftParts.count, rightParts.count) {
+            let difference = (index < leftParts.count ? leftParts[index] : 0) -
+                (index < rightParts.count ? rightParts[index] : 0)
+            if difference != 0 { return difference }
+        }
+        return 0
+    }
+}
+
+private struct PersistedEntitlementState: Codable {
+    var deliveredOrderIds: Set<String> = []
+    var entitlements: [String: Entitlement] = [:]
 }
 
 final class ProductAPI: @unchecked Sendable {
@@ -391,12 +553,13 @@ enum ProductParser {
         let list = data?["list"] as? [[String: Any]] ?? root["list"] as? [[String: Any]] ?? root["data"] as? [[String: Any]] ?? []
         return list.compactMap { item in
             guard let id = string(item["market_product_id"]), !id.isEmpty else { return nil }
+            let coinsGranted = int(item["coins_granted"])
             return Product(
                 marketProductId: id,
                 name: string(item["name"]) ?? "",
                 description: string(item["description"]) ?? "",
-                productType: type(int(item["product_type"])),
-                coinsGranted: int(item["coins_granted"]),
+                productType: type(int(item["product_type"]), coinsGranted: coinsGranted),
+                coinsGranted: coinsGranted,
                 price: string(item["price"]),
                 currency: string(item["currency"]),
                 localizedPrice: string(item["localized_price"]),
@@ -409,9 +572,9 @@ enum ProductParser {
         }
     }
 
-    private static func type(_ value: Int?) -> ProductType {
+    private static func type(_ value: Int?, coinsGranted: Int?) -> ProductType {
         switch value {
-        case 1: .iap
+        case 1: (coinsGranted ?? 0) > 0 ? .consumable : .iap
         case 2: .subscription
         default: .unknown
         }

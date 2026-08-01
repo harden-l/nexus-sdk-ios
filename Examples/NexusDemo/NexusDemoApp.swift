@@ -231,9 +231,7 @@ final class NexusDemoViewController: UIViewController {
 
             let paymentConfig = try PaymentConfig(productId: productId, defaultChannel: .mock, enabledChannels: [.mock, .appStore], fallbackChannels: [.appStore])
             NexusPayment.shared.initialize(config: paymentConfig)
-            NexusPayment.shared.setProductsForTesting(demoProducts())
-            NexusPayment.shared.setRelatedProductsForTesting(demoRelatedProducts())
-            append("Payment initialized with mock products")
+            append("Payment initialized with API products")
 
             NexusCrossPromo.shared.initialize(config: try CrossPromoConfig(sourceProductId: productId, campaign: "ios_demo", defaultPlacement: "demo_home"))
             NexusCrossPromo.shared.setProductsForTesting(demoPromoProducts())
@@ -590,13 +588,6 @@ final class NexusDemoViewController: UIViewController {
         [
             Product(marketProductId: "nexus_vip_month", name: "Monthly VIP", description: "VIP for one month", productType: .subscription, coinsGranted: 300, price: "4.99", currency: "USD", localizedPrice: "$4.99", subscriptionPeriod: "P1M", hasTrial: true, entitlementId: "vip", benefits: ["No ads", "300 coins"]),
             Product(marketProductId: "nexus_coins_100", name: "100 Coins", description: "Coin pack", productType: .iap, coinsGranted: 100, price: "0.99", currency: "USD", localizedPrice: "$0.99", entitlementId: "coins_100", benefits: ["100 coins"])
-        ]
-    }
-
-    private func demoRelatedProducts() -> [RelatedProduct] {
-        [
-            RelatedProduct(productId: "8", productName: "Nexus Notes", description: "Shared VIP notes app", icon: "", downloadUrl: "https://apps.apple.com/app/id123456789", packageName: "123456789"),
-            RelatedProduct(productId: "9", productName: "Nexus Cleaner", description: "Another product under this account", icon: "", downloadUrl: "https://apps.apple.com/app/id987654321", packageName: "987654321")
         ]
     }
 

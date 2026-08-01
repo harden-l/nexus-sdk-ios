@@ -35,7 +35,7 @@ public final class DefaultCrossPromoURLOpener: CrossPromoURLOpener, @unchecked S
 
 public final class NexusCrossPromo: @unchecked Sendable {
     public static let shared = NexusCrossPromo()
-    public static let version = "0.0.4"
+    public static let version = "0.0.5"
 
     private var config: CrossPromoConfig?
     private var activePageOptions = ShowPromoPageOptions()

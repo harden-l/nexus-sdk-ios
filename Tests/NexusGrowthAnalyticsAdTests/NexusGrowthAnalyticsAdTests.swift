@@ -49,4 +49,53 @@ final class NexusGrowthAnalyticsAdTests: XCTestCase {
         XCTAssertNotNil(try sdk.reportPurchaseRevenue(payload))
         XCTAssertNil(try sdk.reportPurchaseRevenue(payload))
     }
+
+    func testShowWithoutCachePreloadsAndOnlyActualShowConsumesFrequency() throws {
+        let sdk = NexusGrowthAnalyticsAd.shared
+        sdk.initialize(
+            config: try AnalyticsConfig(productId: "ad-state-test", enableFirebase: false, enableAppsflyer: false),
+            providers: [],
+            adProvider: MockAdProvider()
+        )
+        let placement = try AdPlacement(
+            placement: "screen_a",
+            adUnitId: "shared-unit",
+            format: .interstitial,
+            frequencyCap: 1
+        )
+        let callbacks = RecordingAdCallbacks()
+
+        try sdk.showAd(placement, callbacks: callbacks)
+        try sdk.showAd(placement, callbacks: callbacks)
+        try sdk.showAd(placement, callbacks: callbacks)
+
+        XCTAssertEqual(callbacks.shownPlacements, ["screen_a"])
+        XCTAssertEqual(callbacks.failureCount, 2)
+    }
+
+    func testMockCacheIsSharedByFormatAndAdUnitId() throws {
+        let provider = MockAdProvider()
+        let first = try AdPlacement(placement: "screen_a", adUnitId: "shared-unit", format: .interstitial)
+        let second = try AdPlacement(placement: "screen_b", adUnitId: "shared-unit", format: .interstitial)
+        let callbacks = RecordingAdCallbacks()
+
+        provider.loadAd(first, callbacks: nil)
+        provider.showAd(second, callbacks: callbacks)
+
+        XCTAssertEqual(callbacks.shownPlacements, ["screen_b"])
+        XCTAssertEqual(callbacks.failureCount, 0)
+    }
+}
+
+private final class RecordingAdCallbacks: AdCallbacks, @unchecked Sendable {
+    var shownPlacements: [String] = []
+    var failureCount = 0
+
+    func onShown(_ placement: AdPlacement) {
+        shownPlacements.append(placement.placement)
+    }
+
+    func onFailed(_ placement: AdPlacement, error: Error) {
+        failureCount += 1
+    }
 }

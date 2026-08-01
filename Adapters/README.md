@@ -9,22 +9,18 @@ Each provider is an optional Swift Package. Integrators add only the packages th
 
 The base `ios/Package.swift` stays free of third-party analytics and ad dependencies.
 
-## Usage
+## Remote Packages
 
-Add the base package first:
-
-```swift
-.package(path: "path/to/sdk-platform/ios")
-```
-
-Then add only the provider packages needed by the host app:
+Add the base package and only the Provider packages needed by the host App:
 
 ```swift
-.package(path: "path/to/sdk-platform/ios/Adapters/FirebaseProvider")
-.package(path: "path/to/sdk-platform/ios/Adapters/AppsFlyerProvider")
-.package(path: "path/to/sdk-platform/ios/Adapters/AdMobProvider")
-.package(path: "path/to/sdk-platform/ios/Adapters/DataEyeProvider")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.5"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.5"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.5"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.5")
 ```
+
+DataEye remains a product of the base Nexus SDK package because it uses a host-provided bridge and does not force the official DataEye SDK into the package dependency graph.
 
 Initialize with provider injection:
 
@@ -58,6 +54,8 @@ Firebase requires `GoogleService-Info.plist` in the host app. AdMob requires `GA
 `AppsFlyerAnalyticsProvider` registers as the AppsFlyer conversion and deep-link delegate. Conversion data, OneLink app-open attribution, and UDL deep-link data are saved into `NexusGrowthAnalyticsAd.getInstallSource()`.
 
 `AdMobAdProvider` listens to Google Mobile Ads paid events for app-open, interstitial, rewarded, banner, and native ads. Pass a `revenueReporter` closure to forward the generated `AdRevenuePayload` to `NexusGrowthAnalyticsAd.reportAdRevenue`.
+
+Full-screen ads are cached by `format + adUnitId`. Duplicate loads are coalesced, a cache miss during `showAd` starts loading for the next attempt, and the provider automatically preloads the next ad after a successful or failed presentation.
 
 `FirebaseProvider` uses Firebase's official Swift Package dependency:
 

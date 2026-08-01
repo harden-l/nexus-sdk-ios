@@ -6,7 +6,7 @@ import UIKit
 
 public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
     public static let shared = NexusGrowthAnalyticsAd()
-    public static let version = "0.0.4"
+    public static let version = "0.0.5"
 
     private var config: AnalyticsConfig?
     private var currentUser: SDKUser?
@@ -106,8 +106,13 @@ public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
             return
         }
         try track("ad_show", params: placement.eventParams())
-        frequencyController.recordShown(placement)
-        adProvider.showAd(placement, callbacks: callbacks)
+        adProvider.showAd(
+            placement,
+            callbacks: ShownTrackingAdCallbacks(
+                downstream: callbacks,
+                onShown: { [weak self] in self?.frequencyController.recordShown(placement) }
+            )
+        )
     }
 
     #if canImport(UIKit)
@@ -182,5 +187,40 @@ public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
         if config?.debug == true {
             print("[NexusGrowthAnalyticsAd] \(message)")
         }
+    }
+}
+
+private final class ShownTrackingAdCallbacks: AdCallbacks, @unchecked Sendable {
+    private let downstream: AdCallbacks?
+    private let onShownHandler: @Sendable () -> Void
+
+    init(downstream: AdCallbacks?, onShown: @escaping @Sendable () -> Void) {
+        self.downstream = downstream
+        self.onShownHandler = onShown
+    }
+
+    func onLoaded(_ placement: AdPlacement) {
+        downstream?.onLoaded(placement)
+    }
+
+    func onShown(_ placement: AdPlacement) {
+        onShownHandler()
+        downstream?.onShown(placement)
+    }
+
+    func onClicked(_ placement: AdPlacement) {
+        downstream?.onClicked(placement)
+    }
+
+    func onClosed(_ placement: AdPlacement) {
+        downstream?.onClosed(placement)
+    }
+
+    func onReward(_ placement: AdPlacement) {
+        downstream?.onReward(placement)
+    }
+
+    func onFailed(_ placement: AdPlacement, error: Error) {
+        downstream?.onFailed(placement, error: error)
     }
 }
