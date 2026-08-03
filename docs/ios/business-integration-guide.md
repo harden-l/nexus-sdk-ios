@@ -2,7 +2,7 @@
 
 本文面向接入 Nexus SDK 的 iOS 业务 App。SDK 按模块提供能力，业务方可以根据需求只接入其中 1 个或多个模块。
 
-当前版本：`0.0.5`
+当前版本：`0.0.6`
 
 ## 1. 模块选择
 
@@ -52,19 +52,19 @@
 https://github.com/harden-l/nexus-sdk-ios.git
 ```
 
-推荐指定版本：`0.0.5`。
+推荐指定版本：`0.0.6`。
 
 Xcode 接入：
 
 1. `File` -> `Add Package Dependencies...`
 2. 输入 `https://github.com/harden-l/nexus-sdk-ios.git`
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.5`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.6`
 4. 按需勾选业务 App target 需要的 products
 
 Package.swift 接入：
 
 ```swift
-.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.5")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.6")
 ```
 
 按需添加 target product：
@@ -87,11 +87,11 @@ Package.swift 接入：
 | AdMob | `https://github.com/harden-l/nexus-sdk-ios-admob-provider.git` | `NexusGrowthAnalyticsAdAdMob` |
 | DataEye | 主 SDK Package | `NexusGrowthAnalyticsAdDataEye` |
 
-所有独立 Provider 当前版本均为 `0.0.5`。在 Xcode 中添加 Provider 时：
+所有独立 Provider 当前版本均为 `0.0.6`。在 Xcode 中添加 Provider 时：
 
 1. 再次选择 `File` -> `Add Package Dependencies...`
 2. 输入上表对应的 Provider Package URL
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.5`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.6`
 4. 只勾选业务 App 实际使用的 Provider product
 
 例如只使用 AdMob，只需要添加主 SDK 的 `NexusGrowthAnalyticsAd` 和 AdMob 包的 `NexusGrowthAnalyticsAdAdMob`。不需要添加 Firebase 或 AppsFlyer Provider。
@@ -100,10 +100,10 @@ Package.swift 接入：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.5"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.5"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.5"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.5")
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.6"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.6"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.6"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.6")
 ]
 ```
 
@@ -122,7 +122,7 @@ Provider 与主 SDK 使用相同版本号。主 SDK 不强制拉取 Firebase、A
 
 - 每个 Provider 仓库只引入对应的官方 SDK，不会因为接入一个 Provider 而解析另外两个平台 SDK。
 - 业务 App 需要同时添加主 SDK product `NexusGrowthAnalyticsAd` 和实际使用的 Provider product。
-- 主 SDK 与 Provider 应保持相同版本，本版本统一使用 `0.0.5`。
+- 主 SDK 与 Provider 应保持相同版本，本版本统一使用 `0.0.6`。
 - DataEye Provider 位于主 SDK 中，但 DataEye 官方 iOS SDK 仍由业务 App 按官方文档接入，再通过 `DataEyeBridge` 连接。
 
 ## 4. CoreUserSDK 接入
@@ -246,7 +246,7 @@ if !user.emailBound {
 }
 ```
 
-`fetchUserInfo()` 返回用户资料和当前余额 `balance`，并刷新 SDK 本地用户缓存。业务方展示金币余额或扣金币后刷新余额时，可以读取返回的 `user.balance`。
+`fetchUserInfo()` 返回用户资料和当前余额 `balance`，并刷新 SDK 本地用户缓存。`SDKUser.balance` 类型为 `Double`，支持小数余额；业务方展示金币余额或扣金币后刷新余额时，可以读取返回的 `user.balance`。
 
 使用 SDK 内置邮箱绑定弹窗：
 
@@ -296,15 +296,25 @@ let consume = try await NexusCoreUser.shared.consumeChatCoins(
 ## 5. GrowthAnalyticsAdSDK 接入
 ### 5.1 iOS 工程配置
 
+Firebase、AppsFlyer 和 DataEye 可以独立启用，也可以同时启用。iOS 端是否真实上报以传给 `NexusGrowthAnalyticsAd.shared.initialize(..., providers:)` 的 Provider 实例为准；只设置 `AnalyticsConfig.enableFirebase`、`enableAppsflyer` 或 `enableBI`，但没有传入对应真实 Provider，不会完成平台接入。
+
+| 平台 | Package Product | 宿主 App 必须配置 | 初始化对象 |
+| --- | --- | --- | --- |
+| Firebase | `NexusGrowthAnalyticsAdFirebase` | 与 Bundle ID 匹配的 `GoogleService-Info.plist` | `FirebaseAnalyticsProvider` |
+| AppsFlyer | `NexusGrowthAnalyticsAdAppsFlyer` | Dev Key、Apple App ID；归因场景配置 Universal Link/URL Scheme | `AppsFlyerAnalyticsProvider` |
+| DataEye | `NexusGrowthAnalyticsAdDataEye` | 官方 DataEye iOS SDK、DataEye App ID、可选 Server URL、业务方 `DataEyeBridge` | `DataEyeAnalyticsProvider` |
+
 Firebase：
 
 - 将 Firebase Console 下载的真实 `GoogleService-Info.plist` 加入业务 App target。
 - `BUNDLE_ID` 必须和业务 App 的 Bundle Identifier 一致。
 - SDK 不内置 `GoogleService-Info.plist`。
+- `FirebaseAnalyticsProvider()` 默认在 Firebase 尚未初始化时调用 `FirebaseApp.configure()`；如果业务 App 已自行初始化 Firebase，使用 `FirebaseAnalyticsProvider(configureIfNeeded: false)`。
 
 AppsFlyer：
 
 - 配置 Dev Key 和 Apple App ID。
+- `appleAppID` 传 App Store 的纯数字应用 ID，不要传 Bundle ID。
 - 配置 Universal Link / URL Scheme。
 - 在 AppDelegate / SceneDelegate 中将 URL 回调转发给 AppsFlyer Provider。
 
@@ -335,6 +345,35 @@ DataEye：
 - 业务 App 按 DataEye 官方文档接入官方 iOS SDK。
 - 实现 `DataEyeBridge`，把 `initialize`、`setUserId`、`setUserProperties`、`track`、`flush` 转发到官方 SDK。
 - SDK 负责 Nexus 事件到 BI(DataEye) 参数的映射，真正发送由业务方 bridge 调官方 DataEye SDK 完成。
+- `NoopDataEyeBridge` 只用于开发测试，不会向 DataEye 发送数据，生产环境不得使用。
+
+最小 Bridge 结构如下，方法体需要调用业务 App 实际接入版本的 DataEye 官方 API：
+
+```swift
+import NexusGrowthAnalyticsAdDataEye
+
+final class OfficialDataEyeBridge: DataEyeBridge, @unchecked Sendable {
+    func initialize(appId: String, serverUrl: String?) {
+        // 调用 DataEye 官方 SDK 初始化 API
+    }
+
+    func setUserId(_ uid: String?) {
+        // 调用 DataEye 登录或设置用户 ID API
+    }
+
+    func setUserProperties(_ properties: [String: Any?]) {
+        // 按当前 DataEye SDK 能力设置或缓存用户属性
+    }
+
+    func track(eventName: String, parameters: [String: Any]) {
+        // 调用 DataEye 官方事件上报 API
+    }
+
+    func flush() {
+        // DataEye SDK 提供 flush API 时调用；否则可留空
+    }
+}
+```
 
 ### 5.2 初始化
 
@@ -342,6 +381,7 @@ DataEye：
 import NexusGrowthAnalyticsAd
 import NexusGrowthAnalyticsAdAdMob
 import NexusGrowthAnalyticsAdAppsFlyer
+import NexusGrowthAnalyticsAdDataEye
 import NexusGrowthAnalyticsAdFirebase
 
 let analyticsConfig = try AnalyticsConfig(
@@ -356,7 +396,14 @@ let analyticsConfig = try AnalyticsConfig(
 let firebase = FirebaseAnalyticsProvider()
 let appsFlyer = AppsFlyerAnalyticsProvider(
     devKey: "<APPSFLYER_DEV_KEY>",
-    appleAppID: "<APPLE_APP_ID>"
+    appleAppID: "<NUMERIC_APPLE_APP_ID>",
+    startImmediately: true,
+    isDebug: false
+)
+let dataEye = DataEyeAnalyticsProvider(
+    appId: "<DATAEYE_APP_ID>",
+    serverUrl: nil,
+    bridge: OfficialDataEyeBridge()
 )
 let adMob = AdMobAdProvider(
     rootViewControllerProvider: { rootViewController },
@@ -367,10 +414,42 @@ let adMob = AdMobAdProvider(
 
 NexusGrowthAnalyticsAd.shared.initialize(
     config: analyticsConfig,
-    providers: [firebase, appsFlyer],
+    providers: [firebase, appsFlyer, dataEye],
     adProvider: adMob
 )
 ```
+
+需要 AppsFlyer OneLink 或 Deep Link 归因时，将系统回调转发给同一个 `AppsFlyerAnalyticsProvider` 实例：
+
+```swift
+func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+) -> Bool {
+    appsFlyer.handleOpen(url: url, options: options)
+    return true
+}
+
+func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+) -> Bool {
+    appsFlyer.continueUserActivity(userActivity) { objects in
+        restorationHandler(objects?.compactMap { $0 as? UIUserActivityRestoring })
+    }
+}
+```
+
+配置检查：
+
+- 只启用 Firebase：只创建并传入 `FirebaseAnalyticsProvider`，同时将 `enableFirebase = true`、`enableBI = false`、`enableAppsflyer = false`。
+- 只启用 AppsFlyer：只创建并传入 `AppsFlyerAnalyticsProvider`，同时将 `enableAppsflyer = true`，其余事件平台开关设为 `false`。
+- 只启用 DataEye：只创建并传入 `DataEyeAnalyticsProvider`，同时将 `enableBI = true`，其余事件平台开关设为 `false`。
+- 同时启用：把三个真实 Provider 都加入 `providers`；不要加入未配置的平台，也不要在生产环境使用 Mock/Noop Provider。
+- Provider 构造参数中的 AppsFlyer Dev Key、Apple App ID、DataEye App ID 和 Server URL 是实际生效配置；`AnalyticsConfig` 中同名字段不会替代 Provider 构造参数。
+- `debug = true` 只控制 Nexus SDK 日志；AppsFlyer 使用 `isDebug`，Firebase/DataEye 调试日志按各自官方 SDK 配置。
 
 如果已接入 CoreUserSDK：
 
@@ -393,7 +472,7 @@ NexusGrowthAnalyticsAd.shared.setUserProperties([
 ])
 ```
 
-当前 Firebase 和 AppsFlyer 只按需求处理 `ad_impression` 的正式字段映射；BI(DataEye) 按 Nexus/BI 事件模型上报。
+广告收益由 AdMob Paid Event 触发 `reportAdRevenue()`。SDK 内部事件名是 `ad_revenue`，发送到 Firebase、AppsFlyer 和 DataEye 时均映射为 `ad_imp`。Firebase / AppsFlyer 当前只发送该事件；BI(DataEye) 继续按 Nexus/BI 事件模型处理其它 BI 事件。
 
 ### 5.4 Deep Link 和归因
 
@@ -461,11 +540,7 @@ let pageConfig = try SubscriptionPageConfig(
     ),
     paymentChannels: [.appStore],
     ctaText: "Continue",
-    restoreText: "Restore",
-    showTerms: true,
-    showPrivacy: true,
-    termsUrl: "https://example.com/terms",
-    privacyUrl: "https://example.com/privacy"
+    restoreText: "Restore"
 )
 
 NexusPayment.shared.showSubscriptionPage(
@@ -476,18 +551,20 @@ NexusPayment.shared.showSubscriptionPage(
 
 打开订阅页后，SDK 会自动完成以下流程，业务方不需要提前获取商品或手动调用购买接口：
 
-- 从 Nexus 后台获取商品的 `market_product_id`、`product_type` 和 `coins_granted`。
+- 从 Nexus 后台获取商品的 `market_product_id`、`product_type` 和 `coins_granted`；`Product.coinsGranted` 类型为 `Double?`，保留接口原始值并支持小数赠币。
+- 订阅页展示金币时统一使用 `coins_granted × 100`，例如接口返回 `20` 时页面展示 `2000`；购买判断和订单处理仍使用接口原始值。
 - 从 StoreKit 2 获取价格、币种、本地化价格、订阅周期和试用信息，并与后台商品合并。
 - 获取关联应用并展示 Membership Share 区域。
 - 用户点击 CTA 后发起购买，购买成功后完成服务端订单校验和权益处理。
 - 页面开启恢复入口时，由页面执行恢复流程。
 - 订阅页只展示同时存在于 Nexus 商品接口和 App Store 的商品；后台配置错误或商店不存在的商品不会展示。
 - 权益和交付记录按 `productId + uid` 持久化，重新初始化 SDK 或切换用户后仍能正确隔离和恢复。
+- 服务条款和隐私协议默认展示，分别使用 `https://www.crypsiscollectiveinc.com/terms.html` 和 `https://www.crypsiscollectiveinc.com/privacy.html`；点击后由系统默认浏览器打开。
 
 校验规则：
 
-- `showTerms = true` 时 `termsUrl` 必填。
-- `showPrivacy = true` 时 `privacyUrl` 必填。
+- `showTerms`、`showPrivacy` 默认均为 `true`，业务方可显式设为 `false` 隐藏对应入口。
+- `termsUrl`、`privacyUrl` 已提供上述默认值；业务方可以覆盖，但入口开启时不能传空字符串。
 - 支付方式配置错误时不自动兜底。
 
 ### 6.3 订单和权益自动处理

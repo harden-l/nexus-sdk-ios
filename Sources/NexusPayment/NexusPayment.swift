@@ -7,7 +7,7 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.5"
+    public static let version = "0.0.6"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]
@@ -553,7 +553,7 @@ enum ProductParser {
         let list = data?["list"] as? [[String: Any]] ?? root["list"] as? [[String: Any]] ?? root["data"] as? [[String: Any]] ?? []
         return list.compactMap { item in
             guard let id = string(item["market_product_id"]), !id.isEmpty else { return nil }
-            let coinsGranted = int(item["coins_granted"])
+            let coinsGranted = double(item["coins_granted"])
             return Product(
                 marketProductId: id,
                 name: string(item["name"]) ?? "",
@@ -572,7 +572,7 @@ enum ProductParser {
         }
     }
 
-    private static func type(_ value: Int?, coinsGranted: Int?) -> ProductType {
+    private static func type(_ value: Int?, coinsGranted: Double?) -> ProductType {
         switch value {
         case 1: (coinsGranted ?? 0) > 0 ? .consumable : .iap
         case 2: .subscription
@@ -590,6 +590,13 @@ enum ProductParser {
         if let value = value as? Int { return value }
         if let value = value as? NSNumber { return value.intValue }
         if let value = value as? String { return Int(value) }
+        return nil
+    }
+
+    private static func double(_ value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String { return Double(value) }
         return nil
     }
 

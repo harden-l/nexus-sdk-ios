@@ -566,7 +566,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             lines.append(metadata)
         }
         if let coins = product.coinsGranted, coins > 0 {
-            lines.append("Get \(coins) coins after purchase")
+            lines.append("Get \(coinAmountText(coins)) coins after purchase")
         }
         return lines.joined(separator: "\n")
     }
@@ -574,6 +574,10 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     private func productDisplayName(_ product: Product) -> String {
         let name = product.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? product.marketProductId : name
+    }
+
+    private func coinAmountText(_ value: Double) -> String {
+        CoinAmountFormatter.displayText(value)
     }
 
     private func currentAppCard() -> UIView {

@@ -1,6 +1,9 @@
 import Foundation
 
 public struct SubscriptionPageConfig: Equatable, Sendable {
+    public static let defaultTermsUrl = "https://www.crypsiscollectiveinc.com/terms.html"
+    public static let defaultPrivacyUrl = "https://www.crypsiscollectiveinc.com/privacy.html"
+
     public var templateId: String
     public var scene: String
     public var title: String
@@ -29,10 +32,10 @@ public struct SubscriptionPageConfig: Equatable, Sendable {
         paymentChannels: [PaymentChannel] = [],
         showPaymentChannel: Bool = true,
         showRestore: Bool = true,
-        showTerms: Bool = false,
-        showPrivacy: Bool = false,
-        termsUrl: String = "",
-        privacyUrl: String = "",
+        showTerms: Bool = true,
+        showPrivacy: Bool = true,
+        termsUrl: String = SubscriptionPageConfig.defaultTermsUrl,
+        privacyUrl: String = SubscriptionPageConfig.defaultPrivacyUrl,
         ctaText: String = "Start Pro",
         restoreText: String = "Restore Purchase",
         termsText: String = "Terms",

@@ -5,6 +5,8 @@ import NexusGrowthAnalyticsAd
 
 public final class FirebaseAnalyticsProvider: AnalyticsProvider, UserIdentityAnalyticsProvider, UserPropertiesAnalyticsProvider, @unchecked Sendable {
     public let name = "firebase"
+    private static let adRevenueEventName = "ad_revenue"
+    private static let adImpressionEventName = "ad_imp"
 
     public init(configureIfNeeded: Bool = true) {
         if configureIfNeeded && FirebaseApp.app() == nil {
@@ -23,7 +25,8 @@ public final class FirebaseAnalyticsProvider: AnalyticsProvider, UserIdentityAna
     }
 
     public func track(_ event: AnalyticsEvent) {
-        Analytics.logEvent(event.eventName, parameters: firebaseParameters(event.params))
+        guard event.eventName == Self.adRevenueEventName else { return }
+        Analytics.logEvent(Self.adImpressionEventName, parameters: firebaseParameters(event.params))
     }
 
     public func flush() {}

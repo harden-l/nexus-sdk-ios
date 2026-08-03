@@ -4,10 +4,23 @@ import NexusCoreUser
 @testable import NexusPayment
 
 final class NexusPaymentTests: XCTestCase {
-    func testSubscriptionPageRequiresUrlsWhenEnabled() throws {
-        XCTAssertThrowsError(try SubscriptionPageConfig(showTerms: true))
-        XCTAssertThrowsError(try SubscriptionPageConfig(showPrivacy: true))
+    func testCoinAmountFormatterUsesSubscriptionDisplayScale() {
+        XCTAssertEqual(CoinAmountFormatter.displayText(20), "2000")
+        XCTAssertEqual(CoinAmountFormatter.displayText(20.25), "2025")
+        XCTAssertEqual(CoinAmountFormatter.displayText(0.125), "12.5")
+    }
+
+    func testSubscriptionPageLegalLinkDefaultsAndValidation() throws {
+        let config = try SubscriptionPageConfig()
+        XCTAssertTrue(config.showTerms)
+        XCTAssertTrue(config.showPrivacy)
+        XCTAssertEqual(config.termsUrl, SubscriptionPageConfig.defaultTermsUrl)
+        XCTAssertEqual(config.privacyUrl, SubscriptionPageConfig.defaultPrivacyUrl)
+
+        XCTAssertThrowsError(try SubscriptionPageConfig(showTerms: true, termsUrl: ""))
+        XCTAssertThrowsError(try SubscriptionPageConfig(showPrivacy: true, privacyUrl: ""))
         XCTAssertNoThrow(try SubscriptionPageConfig(showTerms: true, showPrivacy: true, termsUrl: "https://example.com/t", privacyUrl: "https://example.com/p"))
+        XCTAssertNoThrow(try SubscriptionPageConfig(showTerms: false, showPrivacy: false, termsUrl: "", privacyUrl: ""))
     }
 
     func testPaymentConfigValidatesChannels() throws {
@@ -48,12 +61,12 @@ final class NexusPaymentTests: XCTestCase {
     }
 
     func testProductParserReadsApiList() throws {
-        let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","description":"Pro","product_type":2,"coins_granted":100,"price":"9.99","currency":"USD","benefits":["A","B"]}]}}"#
+        let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","description":"Pro","product_type":2,"coins_granted":100.25,"price":"9.99","currency":"USD","benefits":["A","B"]}]}}"#
         let products = try ProductParser.parse(body)
 
         XCTAssertEqual(products.first?.marketProductId, "vip_month")
         XCTAssertEqual(products.first?.productType, .subscription)
-        XCTAssertEqual(products.first?.coinsGranted, 100)
+        XCTAssertEqual(products.first?.coinsGranted, 100.25)
         XCTAssertEqual(products.first?.benefits, ["A", "B"])
     }
 
@@ -73,7 +86,7 @@ final class NexusPaymentTests: XCTestCase {
             XCTAssertEqual(request.url?.path, "/m/v7/iap/list")
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Encrypt"), "0")
-            let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","product_type":2,"coins_granted":100}]}}"#
+            let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","product_type":2,"coins_granted":100.25}]}}"#
             let response = HTTPURLResponse(
                 url: try XCTUnwrap(request.url),
                 statusCode: 200,
@@ -94,7 +107,7 @@ final class NexusPaymentTests: XCTestCase {
         let products = try await ProductAPI(config: coreConfig, session: session).getProducts()
 
         XCTAssertEqual(products.first?.marketProductId, "vip_month")
-        XCTAssertEqual(products.first?.coinsGranted, 100)
+        XCTAssertEqual(products.first?.coinsGranted, 100.25)
     }
 
     func testMockPurchaseGrantsEntitlement() async throws {

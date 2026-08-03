@@ -5,6 +5,8 @@ import UIKit
 
 public final class AppsFlyerAnalyticsProvider: NSObject, AnalyticsProvider, UserIdentityAnalyticsProvider, @unchecked Sendable {
     public let name = "appsflyer"
+    private static let adRevenueEventName = "ad_revenue"
+    private static let adImpressionEventName = "ad_imp"
     public var onAttributionResolved: (@Sendable (AttributionData) -> Void)?
     public var onAttributionFailed: (@Sendable (Error) -> Void)?
     private var attributionProxy: AppsFlyerAttributionDelegateProxy?
@@ -46,7 +48,8 @@ public final class AppsFlyerAnalyticsProvider: NSObject, AnalyticsProvider, User
     }
 
     public func track(_ event: AnalyticsEvent) {
-        AppsFlyerLib.shared().logEvent(event.eventName, withValues: appsFlyerValues(event.params))
+        guard event.eventName == Self.adRevenueEventName else { return }
+        AppsFlyerLib.shared().logEvent(Self.adImpressionEventName, withValues: appsFlyerValues(event.params))
     }
 
     public func flush() {}

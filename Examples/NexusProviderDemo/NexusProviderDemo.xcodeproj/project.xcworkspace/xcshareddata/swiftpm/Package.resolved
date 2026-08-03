@@ -1,5 +1,5 @@
 {
-  "originHash" : "58ce1ac158cd877ce8d60c81a654f7f737d780b211d3651565fbfcde10513581",
+  "originHash" : "b50825f2324ecf4492e347356fae000e565eef2be592525e89731f12c0e5e07d",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -116,6 +116,42 @@
       "state" : {
         "revision" : "3851d94a41890dea16dc3db34caf60e585cb4163",
         "version" : "2.30910.1"
+      }
+    },
+    {
+      "identity" : "nexus-sdk-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/harden-l/nexus-sdk-ios.git",
+      "state" : {
+        "revision" : "9c191def8ba8ff9a7e295d3693b178fb2228dfb3",
+        "version" : "0.0.4"
+      }
+    },
+    {
+      "identity" : "nexus-sdk-ios-admob-provider",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git",
+      "state" : {
+        "revision" : "4b98fe653b14b6634d33b74a7cabf8148bd557ef",
+        "version" : "0.0.4"
+      }
+    },
+    {
+      "identity" : "nexus-sdk-ios-appsflyer-provider",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git",
+      "state" : {
+        "revision" : "cf58315af37c3afd2e833dc0f15004cfc4ae0150",
+        "version" : "0.0.4"
+      }
+    },
+    {
+      "identity" : "nexus-sdk-ios-firebase-provider",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git",
+      "state" : {
+        "revision" : "a60ce08ffece3fdf1b47f768a2dde2829e39a665",
+        "version" : "0.0.4"
       }
     },
     {

@@ -10,7 +10,7 @@ final class NexusGrowthAnalyticsAdTests: XCTestCase {
         sdk.setUser(SDKUser(uid: "u1", deviceId: "d1"))
         sdk.setUserProperties(["level": 3])
 
-        let event = try sdk.track("ad_impression", params: ["ad_format": "banner"])
+        let event = try sdk.track("page_view", params: ["page": "home"])
 
         XCTAssertEqual(event.uid, "u1")
         XCTAssertEqual(event.params["level"]?.description, "3")

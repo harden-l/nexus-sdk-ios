@@ -98,7 +98,7 @@ public struct Product: Equatable, Codable, Sendable {
     public var name: String
     public var description: String
     public var productType: ProductType
-    public var coinsGranted: Int?
+    public var coinsGranted: Double?
     public var price: String?
     public var currency: String?
     public var localizedPrice: String?
@@ -108,7 +108,7 @@ public struct Product: Equatable, Codable, Sendable {
     public var entitlementId: String?
     public var benefits: [String]
 
-    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Int? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = []) {
+    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Double? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = []) {
         self.marketProductId = marketProductId
         self.name = name
         self.description = description

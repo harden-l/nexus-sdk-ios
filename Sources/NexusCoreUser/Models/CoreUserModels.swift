@@ -80,7 +80,7 @@ public struct SDKUser: Codable, Equatable, Sendable {
     public var phone: String?
     public var emailBound: Bool
     public var phoneBound: Bool
-    public var balance: Int
+    public var balance: Double
     public var userInfoSynced: Bool
 
     public init(
@@ -90,7 +90,7 @@ public struct SDKUser: Codable, Equatable, Sendable {
         phone: String? = nil,
         emailBound: Bool = false,
         phoneBound: Bool = false,
-        balance: Int = 0,
+        balance: Double = 0,
         userInfoSynced: Bool = false
     ) {
         self.uid = uid

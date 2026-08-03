@@ -4,7 +4,7 @@ import XCTest
 final class NexusCoreUserTests: XCTestCase {
     func testVersionAndConfigDefaults() throws {
         let config = try CoreUserConfig(productId: "7", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false)
-        XCTAssertEqual(NexusCoreUser.version, "0.0.5")
+        XCTAssertEqual(NexusCoreUser.version, "0.0.6")
         XCTAssertEqual(config.version.isEmpty, false)
         XCTAssertEqual(config.country.isEmpty, false)
         XCTAssertEqual(config.language.isEmpty, false)
@@ -40,7 +40,7 @@ final class NexusCoreUserTests: XCTestCase {
     func testSilentLoginStoresUserAndDynamicConfig() async throws {
         MockURLProtocol.responses = [
             "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u1","feature":"on","coins":10}}"#,
-            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u1","email":"user@example.com","phone":"","email_bound":true,"phone_bound":false,"balance":88}}"#
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u1","email":"user@example.com","phone":"","email_bound":true,"phone_bound":false,"balance":88.75}}"#
         ]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
@@ -50,7 +50,7 @@ final class NexusCoreUserTests: XCTestCase {
         let user = try await sdk.silentLogin()
 
         XCTAssertEqual(user.uid, "u1")
-        XCTAssertEqual(user.balance, 88)
+        XCTAssertEqual(user.balance, 88.75)
         XCTAssertEqual(try sdk.getConfig()["feature"] as? String, "on")
         XCTAssertNil(try sdk.getConfig()["uid"])
     }

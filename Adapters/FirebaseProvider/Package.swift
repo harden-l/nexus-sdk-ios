@@ -9,7 +9,7 @@ let package = Package(
         .library(name: "NexusGrowthAnalyticsAdFirebase", targets: ["NexusGrowthAnalyticsAdFirebase"])
     ],
     dependencies: [
-        .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.5"),
+        .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.6"),
         .package(url: "https://github.com/firebase/firebase-ios-sdk.git", from: "12.0.0")
     ],
     targets: [
