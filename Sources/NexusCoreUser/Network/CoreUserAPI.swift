@@ -1,6 +1,7 @@
 import Foundation
 
 final class CoreUserAPI: @unchecked Sendable {
+    private static let userBalanceDisplayScale = 100.0
     private let config: CoreUserConfig
     private let session: URLSession
 
@@ -55,7 +56,7 @@ final class CoreUserAPI: @unchecked Sendable {
             phone: JSONObject.string(data, keys: "phone"),
             emailBound: JSONObject.bool(data, key: "email_bound"),
             phoneBound: JSONObject.bool(data, key: "phone_bound"),
-            balance: JSONObject.double(data, key: "balance") ?? 0,
+            balance: (JSONObject.double(data, key: "balance") ?? 0) * Self.userBalanceDisplayScale,
             userInfoSynced: true
         )
     }

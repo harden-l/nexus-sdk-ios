@@ -2,7 +2,7 @@
 
 This directory contains the Swift Package implementation of the Nexus SDK.
 
-Current release: `0.0.6`
+Current release: `0.0.7`
 
 Current status:
 
@@ -51,4 +51,4 @@ CLANG_MODULE_CACHE_PATH=.swift-cache/clang SWIFTPM_CACHE_PATH=.swift-cache/swift
 
 ## Integration Guide
 
-See [iOS business integration guide](docs/ios/business-integration-guide.md).
+See [iOS business integration guide](../docs/ios/business-integration-guide.md).
