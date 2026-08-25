@@ -113,8 +113,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/harden-l/nexus-sdk-ios.git",
       "state" : {
-        "revision" : "8dcb70e3598d0bca2ab1027fa9907d4cefaba865",
-        "version" : "0.0.6"
+        "revision" : "ebfec230334af6601d5672ba0e33764857155111",
+        "version" : "0.0.8"
       }
     },
     {
