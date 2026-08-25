@@ -29,6 +29,7 @@ final class NexusDemoViewController: UIViewController {
     private let encryptionKeyField = UITextField()
     private let grantTierField = UITextField()
     private let bindEmailField = UITextField()
+    private let passwordField = UITextField()
     private let encryptSwitch = UISwitch()
     private let loginTypeControl = UISegmentedControl(items: NexusDemoViewController.loginTypes.map(\.rawValue))
     private let stack = UIStackView()
@@ -36,6 +37,7 @@ final class NexusDemoViewController: UIViewController {
     private let bannerContainer = UIView()
     private let adCallbacks = DemoAdCallbacks()
     private let nativeCallbacks = DemoNativeCallbacks()
+    private var handledSubscriptionLaunchArgument = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -44,6 +46,11 @@ final class NexusDemoViewController: UIViewController {
         buildLayout()
         bindLogs()
         initializeAllSdks()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        openSubscriptionPageFromLaunchArgumentsIfNeeded()
     }
 
     private func buildLayout() {
@@ -98,6 +105,7 @@ final class NexusDemoViewController: UIViewController {
         stack.addArrangedSubview(section("CoreUserSDK", views: [
             labeledControl("Login Type", loginTypeControl),
             labeledField("Bind Email", bindEmailField),
+            labeledField("Password", passwordField),
             button("Run CoreUser Full Flow", action: #selector(runCoreUserFullFlowTapped)),
             button("Silent Login", action: #selector(loginTapped)),
             button("Fetch User Info", action: #selector(fetchUserInfoTapped)),
@@ -129,8 +137,10 @@ final class NexusDemoViewController: UIViewController {
 
         stack.addArrangedSubview(section("PaymentSDK", views: [
             button("Load Products", action: #selector(loadProductsTapped)),
-            button("Mock Purchase", action: #selector(mockPurchaseTapped)),
             button("Show Subscription Page", action: #selector(showSubscriptionTapped)),
+            button("Preview Aurora", action: #selector(showAuroraSubscriptionTapped)),
+            button("Preview Midnight", action: #selector(showMidnightSubscriptionTapped)),
+            button("Preview Minimal", action: #selector(showMinimalSubscriptionTapped)),
             button("Restore Purchases", action: #selector(restoreTapped)),
             button("Get Entitlements", action: #selector(entitlementsTapped))
         ]))
@@ -152,10 +162,12 @@ final class NexusDemoViewController: UIViewController {
         grantTierField.placeholder = "Optional: 1 / 2 / 3"
         bindEmailField.placeholder = "user@example.com"
         bindEmailField.text = "user@example.com"
+        passwordField.placeholder = "Required for binding and email login"
+        passwordField.isSecureTextEntry = true
         encryptSwitch.isOn = true
         loginTypeControl.selectedSegmentIndex = 0
 
-        [apiBaseUrlField, productIdField, productNameField, encryptionKeyField, grantTierField, bindEmailField].forEach {
+        [apiBaseUrlField, productIdField, productNameField, encryptionKeyField, grantTierField, bindEmailField, passwordField].forEach {
             $0.borderStyle = .roundedRect
             $0.autocapitalizationType = .none
             $0.autocorrectionType = .no
@@ -185,7 +197,7 @@ final class NexusDemoViewController: UIViewController {
                     append("CoreUser full flow started. deviceId=\(deviceId), loginType=\(loginType.rawValue)")
                 }
 
-                let loggedInUser = try await NexusCoreUser.shared.silentLogin(loginType: loginType)
+                let loggedInUser = try await login(loginType: loginType)
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(loggedInUser)
                     append("Full flow login success: \(format(user: loggedInUser))")
@@ -229,9 +241,9 @@ final class NexusDemoViewController: UIViewController {
             NexusGrowthAnalyticsAd.shared.initialize(config: analyticsConfig)
             append("GrowthAnalyticsAd initialized")
 
-            let paymentConfig = try PaymentConfig(productId: productId, defaultChannel: .mock, enabledChannels: [.mock, .appStore], fallbackChannels: [.appStore])
+            let paymentConfig = try PaymentConfig(productId: productId, defaultChannel: .appStore, enabledChannels: [.appStore])
             NexusPayment.shared.initialize(config: paymentConfig)
-            append("Payment initialized with API products")
+            append("Payment initialized with API products and App Store checkout")
 
             NexusCrossPromo.shared.initialize(config: try CrossPromoConfig(sourceProductId: productId, campaign: "ios_demo", defaultPlacement: "demo_home"))
             NexusCrossPromo.shared.setProductsForTesting(demoPromoProducts())
@@ -272,7 +284,7 @@ final class NexusDemoViewController: UIViewController {
             do {
                 try ensureCoreUserInitialized()
                 let loginType = selectedLoginType()
-                let user = try await NexusCoreUser.shared.silentLogin(loginType: loginType)
+                let user = try await login(loginType: loginType)
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(user)
                     append("Login success type=\(loginType.rawValue) \(format(user: user))")
@@ -297,10 +309,11 @@ final class NexusDemoViewController: UIViewController {
 
     @objc private func bindEmailDirectlyTapped() {
         let email = bindEmailField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let password = passwordField.text ?? ""
         Task {
             do {
                 try ensureCoreUserInitialized()
-                let result = try await NexusCoreUser.shared.bindEmail(email)
+                let result = try await NexusCoreUser.shared.bindEmail(email, password: password)
                 let user = try NexusCoreUser.shared.getCurrentUser()
                 await MainActor.run {
                     append("Bind email success uid=\(result.uid), account=\(result.accountValue), bound=\(result.bound)")
@@ -309,6 +322,24 @@ final class NexusDemoViewController: UIViewController {
             } catch {
                 await MainActor.run { append("Bind email failed: \(error.localizedDescription)") }
             }
+        }
+    }
+
+    private func login(loginType: LoginType) async throws -> SDKUser {
+        switch loginType {
+        case .guest:
+            return try await NexusCoreUser.shared.silentLogin()
+        case .email:
+            return try await NexusCoreUser.shared.loginWithEmail(
+                email: bindEmailField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                password: passwordField.text ?? ""
+            )
+        case .phone:
+            throw NSError(
+                domain: "NexusDemo",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Use loginWithPhone(phonePrefix:phone:password:) with phone input"]
+            )
         }
     }
 
@@ -488,42 +519,57 @@ final class NexusDemoViewController: UIViewController {
         }
     }
 
-    @objc private func mockPurchaseTapped() {
-        Task {
-            do {
-                let product = demoProducts()[0]
-                let result = try await NexusPayment.shared.mockPurchase(product: product)
-                await MainActor.run { append("Mock purchase success=\(result.success), order=\(result.orderId ?? "-")") }
-            } catch {
-                await MainActor.run { append("Mock purchase failed: \(error.localizedDescription)") }
-            }
-        }
+    @objc private func showSubscriptionTapped() {
+        showSubscriptionPage(template: .aurora, scene: "demo_standard")
     }
 
-    @objc private func showSubscriptionTapped() {
+    @objc private func showAuroraSubscriptionTapped() {
+        showSubscriptionPage(template: .aurora, scene: "demo_preview_aurora")
+    }
+
+    @objc private func showMidnightSubscriptionTapped() {
+        showSubscriptionPage(template: .midnight, scene: "demo_preview_midnight")
+    }
+
+    @objc private func showMinimalSubscriptionTapped() {
+        showSubscriptionPage(template: .minimal, scene: "demo_preview_minimal")
+    }
+
+    private func showSubscriptionPage(template: SubscriptionPageTemplateId, scene: String) {
         do {
             let config = try SubscriptionPageConfig(
-                templateId: "ios_demo",
-                scene: "demo",
-                title: "Nexus Pro",
-                benefitDescription: "One membership unlocks every app in this account.",
-                benefits: ["No ads", "Shared VIP", "Bonus coins"],
-                sharedApps: SubscriptionSharedAppsConfig(title: "Membership Share", description: "Use the same entitlement across related apps."),
-                paymentChannels: [.mock],
-                ctaText: "Continue",
+                templateId: template.rawValue,
+                scene: scene,
+                title: "Create without limits",
+                benefitDescription: "Generate, refine, and export studio-quality work across your creative apps with premium models, faster queues, and flexible creation credits.",
+                benefits: ["Image generation", "HD export", "Commercial use"],
+                sharedApps: SubscriptionSharedAppsConfig(title: "Membership Share", description: "Your membership gives you access to every current service in this app."),
+                paymentChannels: [.appStore],
+                ctaText: "Start Pro",
                 restoreText: "Restore"
             )
             NexusPayment.shared.showSubscriptionPage(presenting: self, config: config)
-            append("Opened subscription page")
+            append("Opened \(template.rawValue) subscription page")
         } catch {
             append("Show subscription failed: \(error.localizedDescription)")
         }
     }
 
+    private func openSubscriptionPageFromLaunchArgumentsIfNeeded() {
+        guard !handledSubscriptionLaunchArgument else { return }
+        handledSubscriptionLaunchArgument = true
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flagIndex = arguments.firstIndex(of: "--subscription-template"),
+              arguments.indices.contains(flagIndex + 1),
+              let template = SubscriptionPageTemplateId(rawValue: arguments[flagIndex + 1])
+        else { return }
+        showSubscriptionPage(template: template, scene: "demo_capture_\(template.rawValue)")
+    }
+
     @objc private func restoreTapped() {
         Task {
             do {
-                let result = try await NexusPayment.shared.restore(channel: .mock)
+                let result = try await NexusPayment.shared.restore(channel: .appStore)
                 await MainActor.run { append("Restore count=\(result.purchases.count)") }
             } catch {
                 await MainActor.run { append("Restore failed: \(error.localizedDescription)") }
@@ -582,13 +628,6 @@ final class NexusDemoViewController: UIViewController {
 
     private func demoPlacement() throws -> AdPlacement {
         try AdPlacement(placement: "demo_interstitial", adUnitId: "demo_interstitial", format: .interstitial, frequencyCap: 5)
-    }
-
-    private func demoProducts() -> [Product] {
-        [
-            Product(marketProductId: "nexus_vip_month", name: "Monthly VIP", description: "VIP for one month", productType: .subscription, coinsGranted: 300, price: "4.99", currency: "USD", localizedPrice: "$4.99", subscriptionPeriod: "P1M", hasTrial: true, entitlementId: "vip", benefits: ["No ads", "300 coins"]),
-            Product(marketProductId: "nexus_coins_100", name: "100 Coins", description: "Coin pack", productType: .iap, coinsGranted: 100, price: "0.99", currency: "USD", localizedPrice: "$0.99", entitlementId: "coins_100", benefits: ["100 coins"])
-        ]
     }
 
     private func demoPromoProducts() -> [CrossPromoProduct] {

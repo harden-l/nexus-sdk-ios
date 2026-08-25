@@ -2,15 +2,15 @@
 
 本文面向接入 Nexus SDK 的 iOS 业务 App。SDK 按模块提供能力，业务方可以根据需求只接入其中 1 个或多个模块。
 
-当前版本：`0.0.6`
+当前版本：`0.0.8`
 
 ## 1. 模块选择
 
 | 模块 | Swift Package Product | 适用场景 | 前置依赖 |
 | --- | --- | --- | --- |
-| CoreUserSDK | `NexusCoreUser` | 设备 ID、静默登录、用户信息、邮箱绑定、登录动态配置 | 无 |
+| CoreUserSDK | `NexusCoreUser` | 设备 ID、游客登录、邮箱密码登录、用户信息、邮箱绑定、登录动态配置 | 无 |
 | GrowthAnalyticsAdSDK | `NexusGrowthAnalyticsAd` + 按需 Provider | BI/Firebase/AppsFlyer 事件、AdMob 广告、归因 | 建议接入 CoreUserSDK，用于 uid/deviceId |
-| PaymentSDK | `NexusPayment` | 商品、订阅页、App Store 支付、订单校验、权益 | 必须先初始化 CoreUserSDK |
+| PaymentSDK | `NexusPayment` | 商品、三套订阅页模板、App Store 支付、订单校验、权益 | 必须先初始化 CoreUserSDK |
 | CrossPromoSDK | `NexusCrossPromo` | 应用互导推荐页、Deep Link、导量归因 | 必须先初始化 CoreUserSDK；如需事件上报，建议接入 GrowthAnalyticsAdSDK |
 
 ## 2. 通用准备
@@ -52,19 +52,19 @@
 https://github.com/harden-l/nexus-sdk-ios.git
 ```
 
-推荐指定版本：`0.0.6`。
+推荐指定版本：`0.0.8`。
 
 Xcode 接入：
 
 1. `File` -> `Add Package Dependencies...`
 2. 输入 `https://github.com/harden-l/nexus-sdk-ios.git`
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.6`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.8`
 4. 按需勾选业务 App target 需要的 products
 
 Package.swift 接入：
 
 ```swift
-.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.6")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.8")
 ```
 
 按需添加 target product：
@@ -87,11 +87,11 @@ Package.swift 接入：
 | AdMob | `https://github.com/harden-l/nexus-sdk-ios-admob-provider.git` | `NexusGrowthAnalyticsAdAdMob` |
 | DataEye | 主 SDK Package | `NexusGrowthAnalyticsAdDataEye` |
 
-所有独立 Provider 当前版本均为 `0.0.6`。在 Xcode 中添加 Provider 时：
+所有独立 Provider 当前版本均为 `0.0.8`。在 Xcode 中添加 Provider 时：
 
 1. 再次选择 `File` -> `Add Package Dependencies...`
 2. 输入上表对应的 Provider Package URL
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.6`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.8`
 4. 只勾选业务 App 实际使用的 Provider product
 
 例如只使用 AdMob，只需要添加主 SDK 的 `NexusGrowthAnalyticsAd` 和 AdMob 包的 `NexusGrowthAnalyticsAdAdMob`。不需要添加 Firebase 或 AppsFlyer Provider。
@@ -100,10 +100,10 @@ Package.swift 接入：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.6"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.6"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.6"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.6")
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.8"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.8"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.8"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.8")
 ]
 ```
 
@@ -122,7 +122,7 @@ Provider 与主 SDK 使用相同版本号。主 SDK 不强制拉取 Firebase、A
 
 - 每个 Provider 仓库只引入对应的官方 SDK，不会因为接入一个 Provider 而解析另外两个平台 SDK。
 - 业务 App 需要同时添加主 SDK product `NexusGrowthAnalyticsAd` 和实际使用的 Provider product。
-- 主 SDK 与 Provider 应保持相同版本，本版本统一使用 `0.0.6`。
+- 主 SDK 与 Provider 应保持相同版本，本版本统一使用 `0.0.8`。
 - DataEye Provider 位于主 SDK 中，但 DataEye 官方 iOS SDK 仍由业务 App 按官方文档接入，再通过 `DataEyeBridge` 连接。
 
 ## 4. CoreUserSDK 接入
@@ -181,6 +181,14 @@ NexusCoreUser.shared.initialize(config: coreConfig)
 
 ### 4.2 登录
 
+推荐账号流程：
+
+1. 用户未主动选择邮箱登录时，调用 `silentLogin()` 创建或恢复游客用户。
+2. 游客登录成功后根据 `SDKUser.emailBound` 决定是否展示绑定入口；登录本身不会强制弹出绑定页面。
+3. 绑定邮箱时必须同时设置密码。绑定成功后，邮箱成为当前 UID 的登录凭证。
+4. 用户在新设备、重装 App 或其他接入同一账号体系的 App 中主动登录时，直接调用 `loginWithEmail()`，不要先创建新的游客用户。
+5. 邮箱登录成功后 SDK 会自动拉取用户信息，业务方使用返回的 `SDKUser` 更新登录态。
+
 ```swift
 let user = try await NexusCoreUser.shared.silentLogin()
 // user.uid
@@ -191,22 +199,29 @@ let user = try await NexusCoreUser.shared.silentLogin()
 // 登录不会强制绑定邮箱；需要绑定时由业务主动展示入口或调用 ensureEmailBound。
 ```
 
-登录类型：
+邮箱密码登录：
 
 ```swift
-let user = try await NexusCoreUser.shared.silentLogin(loginType: .guest)
+let user = try await NexusCoreUser.shared.loginWithEmail(
+    email: "user@example.com",
+    password: "user-password"
+)
 ```
 
-当前枚举值：
+也可以使用 completion API：
 
-- `.guest`
-- `.email`
-- `.phone`
+```swift
+NexusCoreUser.shared.loginWithEmail(
+    email: "user@example.com",
+    password: "user-password"
+) { result in
+    // 处理登录结果
+}
+```
 
-默认使用 `.guest`。登录请求会携带本地已有 uid；首次登录时 uid 为空字符串。
+`email` 和 `password` 均为必填。登录请求会携带本地已有 uid；本地没有 uid 时发送空字符串，服务端根据邮箱密码恢复对应用户。
 
-登录后SDK会拉取一次用户信息。
-
+登录后 SDK 会拉取一次用户信息。密码只用于当前绑定或登录请求，SDK 不会持久化密码；debug 日志中的密码会被脱敏。
 
 ### 4.3 获取登录动态配置
 
@@ -246,7 +261,7 @@ if !user.emailBound {
 }
 ```
 
-`fetchUserInfo()` 返回用户资料和当前余额 `balance`，并刷新 SDK 本地用户缓存。`SDKUser.balance` 类型为 `Double`，支持小数余额；业务方展示金币余额或扣金币后刷新余额时，可以读取返回的 `user.balance`。
+`fetchUserInfo()` 返回用户资料和当前余额 `balance`，并刷新 SDK 本地用户缓存。SDK 会将用户信息接口返回的 `balance` 乘以 `100` 后写入 `SDKUser.balance`，例如接口返回 `20` 时业务方读取到 `2000`。`SDKUser.balance` 类型为 `Double`，支持小数余额。
 
 使用 SDK 内置邮箱绑定弹窗：
 
@@ -256,10 +271,17 @@ NexusCoreUser.shared.ensureEmailBound(presenting: viewController) { result in
 }
 ```
 
+弹窗会同时要求用户输入邮箱和密码。密码用于设置邮箱登录凭证，绑定成功后可调用 `loginWithEmail()` 登录；SDK 不会在本地持久化密码。
+
+调用绑定接口前应先完成游客登录或其他类型登录，确保 SDK 中存在当前用户 UID。同一邮箱只能按服务端账号规则绑定；邮箱已被占用、密码不符合规则等情况会通过失败结果返回，业务方应向用户展示可理解的错误提示。
+
 直接调用绑定接口：
 
 ```swift
-let result = try await NexusCoreUser.shared.bindEmail("user@example.com")
+let result = try await NexusCoreUser.shared.bindEmail(
+    "user@example.com",
+    password: "user-password"
+)
 ```
 
 ### 4.5 扣除金币
@@ -291,6 +313,7 @@ let consume = try await NexusCoreUser.shared.consumeChatCoins(
 - SDK 会自动携带当前 uid；本地无用户时会先静默登录。
 - `cost` 必须大于 `0`，金币数使用 `Double`，避免小数被截断。
 - 该接口按 `CoreUserConfig.encrypt` 的通用策略加密请求和解密响应，不走登录接口免加密规则。
+- `ConsumeChatCoinsResult` 中的 `cost`、`beforeCoins`、`afterCoins` 和 `balance` 保持扣金币接口返回的原始单位，不执行 `×100`。
 - 扣除成功后 SDK 不直接修改本地 `SDKUser.balance` 缓存；业务方如需刷新余额，调用 `fetchUserInfo()`。
 
 ## 5. GrowthAnalyticsAdSDK 接入
@@ -529,7 +552,7 @@ NexusPayment.shared.initialize(config: paymentConfig)
 
 ```swift
 let pageConfig = try SubscriptionPageConfig(
-    templateId: "default",
+    templateId: SubscriptionPageTemplateId.aurora.rawValue,
     scene: "home",
     title: "Premium",
     benefitDescription: "Unlock premium benefits.",
@@ -549,15 +572,27 @@ NexusPayment.shared.showSubscriptionPage(
 )
 ```
 
+`templateId` 用于切换 SDK 内置页面模板：
+
+| 模板 ID | Swift 枚举值 | 模板说明 |
+| --- | --- | --- |
+| `aurora` | `SubscriptionPageTemplateId.aurora.rawValue` | 明亮现代风格，突出当前权益、共享应用和购买选项；默认模板。 |
+| `midnight` | `SubscriptionPageTemplateId.midnight.rawValue` | 深色沉浸风格，适合会员、内容和创作类产品。 |
+| `minimal` | `SubscriptionPageTemplateId.minimal.rawValue` | 清爽紧凑风格，适合工具类应用或商品较多的页面。 |
+
+未传、传空值或传入未知模板 ID 时会回退到 `aurora`。Android 与 iOS 使用相同模板 ID，业务方可直接由远程配置控制两端样式。
+
+切换模板只需要修改 `templateId`，其余页面配置和调用方式不变。
+
 打开订阅页后，SDK 会自动完成以下流程，业务方不需要提前获取商品或手动调用购买接口：
 
-- 从 Nexus 后台获取商品的 `market_product_id`、`product_type` 和 `coins_granted`；`Product.coinsGranted` 类型为 `Double?`，保留接口原始值并支持小数赠币。
+- 从 Nexus 后台 `/m/v6/iap/list` 获取商品的 `market_product_id`、`product_type` 和 `coins_granted`；`Product.coinsGranted` 类型为 `Double?`，保留接口原始值并支持小数赠币。
+- 页面按 `product_type` 自动分组：`2` 展示为订阅方案，`1` 展示为积分包或一次性内购。
 - 订阅页展示金币时统一使用 `coins_granted × 100`，例如接口返回 `20` 时页面展示 `2000`；购买判断和订单处理仍使用接口原始值。
 - 从 StoreKit 2 获取价格、币种、本地化价格、订阅周期和试用信息，并与后台商品合并。
 - 获取关联应用并展示 Membership Share 区域。
 - 用户点击 CTA 后发起购买，购买成功后完成服务端订单校验和权益处理。
 - 页面开启恢复入口时，由页面执行恢复流程。
-- 订阅页只展示同时存在于 Nexus 商品接口和 App Store 的商品；后台配置错误或商店不存在的商品不会展示。
 - 权益和交付记录按 `productId + uid` 持久化，重新初始化 SDK 或切换用户后仍能正确隔离和恢复。
 - 服务条款和隐私协议默认展示，分别使用 `https://www.crypsiscollectiveinc.com/terms.html` 和 `https://www.crypsiscollectiveinc.com/privacy.html`；点击后由系统默认浏览器打开。
 

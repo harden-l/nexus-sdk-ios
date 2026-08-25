@@ -4,7 +4,7 @@ import XCTest
 final class NexusCoreUserTests: XCTestCase {
     func testVersionAndConfigDefaults() throws {
         let config = try CoreUserConfig(productId: "7", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false)
-        XCTAssertEqual(NexusCoreUser.version, "0.0.7")
+        XCTAssertEqual(NexusCoreUser.version, "0.0.8")
         XCTAssertEqual(config.version.isEmpty, false)
         XCTAssertEqual(config.country.isEmpty, false)
         XCTAssertEqual(config.language.isEmpty, false)
@@ -70,6 +70,81 @@ final class NexusCoreUserTests: XCTestCase {
 
         let loginBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/user/login"])
         XCTAssertEqual(loginBody["gt"] as? Int, 3)
+    }
+
+    func testEmailLoginSendsEmailAndPassword() async throws {
+        MockURLProtocol.responses = [
+            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"email-user"}}"#,
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"email-user","email":"user@example.com","email_bound":true,"balance":0}}"#
+        ]
+        MockURLProtocol.requestBodies = [:]
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(
+            config: try CoreUserConfig(
+                productId: "email-login-test",
+                productName: "demo",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: URLSession(configuration: .mock)
+        )
+        try sdk.clearLocalSession()
+
+        let user = try await sdk.loginWithEmail(email: " user@example.com ", password: "secret123")
+
+        XCTAssertEqual(user.uid, "email-user")
+        let body = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/user/login"])
+        XCTAssertEqual(body["login_type"] as? String, "email")
+        XCTAssertEqual(body["email"] as? String, "user@example.com")
+        XCTAssertEqual(body["password"] as? String, "secret123")
+    }
+
+    func testEmailLoginRejectsMissingPassword() async throws {
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(
+            config: try CoreUserConfig(
+                productId: "email-login-invalid-test",
+                productName: "demo",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: URLSession(configuration: .mock)
+        )
+        try sdk.clearLocalSession()
+
+        do {
+            _ = try await sdk.loginWithEmail(email: "user@example.com", password: "")
+            XCTFail("Expected missing password to fail")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("password is required"))
+        }
+    }
+
+    func testBindEmailSendsPassword() async throws {
+        MockURLProtocol.responses = [
+            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"bind-user"}}"#,
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"bind-user","email":"","email_bound":false,"balance":0}}"#,
+            "/m/v7/user/bind_account": #"{"code":1,"message":"success","data":{"uid":"bind-user","account_type":"email","account_value":"user@example.com","bound":true}}"#
+        ]
+        MockURLProtocol.requestBodies = [:]
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(
+            config: try CoreUserConfig(
+                productId: "bind-email-test",
+                productName: "demo",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: URLSession(configuration: .mock)
+        )
+        try sdk.clearLocalSession()
+        _ = try await sdk.silentLogin()
+
+        _ = try await sdk.bindEmail("user@example.com", password: "secret123")
+
+        let body = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/user/bind_account"])
+        XCTAssertEqual(body["email"] as? String, "user@example.com")
+        XCTAssertEqual(body["password"] as? String, "secret123")
     }
 
     func testGetRelatedProductsSendsAccountNameAndProductId() async throws {

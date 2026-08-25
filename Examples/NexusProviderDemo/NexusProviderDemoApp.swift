@@ -679,7 +679,7 @@ final class NexusProviderDemoViewController: UIViewController {
     @objc private func showSubscriptionTapped() {
         do {
             let config = try SubscriptionPageConfig(
-                templateId: "ios_demo",
+                templateId: SubscriptionPageTemplateId.aurora.rawValue,
                 scene: "demo",
                 title: "Nexus Pro",
                 benefitDescription: "One membership unlocks every app in this account.",

@@ -114,12 +114,20 @@ public struct BindAccountParams: Equatable, Sendable {
     public var email: String?
     public var phonePrefix: String?
     public var phone: String?
+    public var password: String
 
-    public init(accountType: AccountType, email: String? = nil, phonePrefix: String? = nil, phone: String? = nil) {
+    public init(
+        accountType: AccountType,
+        email: String? = nil,
+        phonePrefix: String? = nil,
+        phone: String? = nil,
+        password: String
+    ) {
         self.accountType = accountType
         self.email = email
         self.phonePrefix = phonePrefix
         self.phone = phone
+        self.password = password
     }
 }
 

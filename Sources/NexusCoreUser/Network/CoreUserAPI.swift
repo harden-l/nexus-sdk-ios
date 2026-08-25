@@ -10,7 +10,23 @@ final class CoreUserAPI: @unchecked Sendable {
         self.session = session
     }
 
-    func login(deviceId: String, uid: String, loginType: LoginType, att: Int) async throws -> (uid: String, config: [String: Any?]) {
+    func login(
+        deviceId: String,
+        uid: String,
+        loginType: LoginType,
+        att: Int,
+        email: String? = nil,
+        phonePrefix: String? = nil,
+        phone: String? = nil,
+        password: String? = nil
+    ) async throws -> (uid: String, config: [String: Any?]) {
+        try validateLogin(
+            loginType: loginType,
+            email: email,
+            phonePrefix: phonePrefix,
+            phone: phone,
+            password: password
+        )
         var values: [String: Any?] = [
             "login_type": loginType.rawValue,
             "uid": uid,
@@ -22,7 +38,10 @@ final class CoreUserAPI: @unchecked Sendable {
             "st": timestamp(),
             "att": att,
             "level": 1,
-            "email": ""
+            "email": email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            "phone_prefix": phonePrefix?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            "phone": phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            "password": password ?? ""
         ]
         if let gt = config.gt {
             values["gt"] = gt
@@ -62,6 +81,9 @@ final class CoreUserAPI: @unchecked Sendable {
     }
 
     func bindAccount(uid: String, deviceId: String, params: BindAccountParams) async throws -> BindAccountResult {
+        guard !params.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CoreUserError.invalidConfig("password is required")
+        }
         switch params.accountType {
         case .email where (params.email ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
             throw CoreUserError.invalidConfig("email is required")
@@ -76,7 +98,8 @@ final class CoreUserAPI: @unchecked Sendable {
             "account_type": params.accountType.rawValue,
             "email": params.email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
             "phone_prefix": params.phonePrefix?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-            "phone": params.phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            "phone": params.phone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            "password": params.password
         ])
         let root = try JSONObject.decodeObject(response)
         if let code = JSONObject.int(root, key: "code"), code != 1 {
@@ -89,6 +112,33 @@ final class CoreUserAPI: @unchecked Sendable {
             accountValue: JSONObject.string(data, keys: "account_value") ?? params.email ?? [params.phonePrefix, params.phone].compactMap { $0 }.joined(),
             bound: JSONObject.bool(data, key: "bound", default: true)
         )
+    }
+
+    private func validateLogin(
+        loginType: LoginType,
+        email: String?,
+        phonePrefix: String?,
+        phone: String?,
+        password: String?
+    ) throws {
+        switch loginType {
+        case .guest:
+            return
+        case .email:
+            guard !(email ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CoreUserError.invalidConfig("email is required")
+            }
+            guard !(password ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CoreUserError.invalidConfig("password is required")
+            }
+        case .phone:
+            guard !(phonePrefix ?? "").isEmpty, !(phone ?? "").isEmpty else {
+                throw CoreUserError.invalidConfig("phonePrefix and phone are required")
+            }
+            guard !(password ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CoreUserError.invalidConfig("password is required")
+            }
+        }
     }
 
     func consumeChatCoins(uid: String, cost: Double, remark: String?) async throws -> ConsumeChatCoinsResult {
@@ -166,7 +216,12 @@ final class CoreUserAPI: @unchecked Sendable {
         let plainBody = String(data: try JSONObject.encode(values), encoding: .utf8) ?? "{}"
         request.httpBody = try APIRequestEncryption.prepareBody(plainBody, config: config, encrypt: shouldEncrypt)
         if config.debug {
-            print("[CoreUserAPI] POST \(path) encrypt=\(shouldEncrypt ? 1 : 0) request=\(String(data: request.httpBody ?? Data(), encoding: .utf8) ?? "")")
+            var debugValues = values
+            if debugValues.keys.contains("password") {
+                debugValues["password"] = "***"
+            }
+            let debugBody = String(data: try JSONObject.encode(debugValues), encoding: .utf8) ?? "{}"
+            print("[CoreUserAPI] POST \(path) encrypt=\(shouldEncrypt ? 1 : 0) request=\(debugBody)")
         }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 200

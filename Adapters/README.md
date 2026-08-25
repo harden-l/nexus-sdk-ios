@@ -14,10 +14,10 @@ The base `ios/Package.swift` stays free of third-party analytics and ad dependen
 Add the base package and only the Provider packages needed by the host App:
 
 ```swift
-.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.7"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.7"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.7"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.7")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.8"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.8"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.8"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.8")
 ```
 
 DataEye remains a product of the base Nexus SDK package because it uses a host-provided bridge and does not force the official DataEye SDK into the package dependency graph.

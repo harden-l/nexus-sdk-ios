@@ -7,13 +7,14 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.7"
+    public static let version = "0.0.8"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]
     private var appStoreProvider: AppStorePaymentProvider?
     private var orderVerificationAPI: OrderVerificationAPI?
     private var products: [Product] = []
+    private var apiProducts: [Product] = []
     private var relatedProducts: [RelatedProduct] = []
     private var useTestingProducts = false
     private var useTestingRelatedProducts = false
@@ -27,6 +28,7 @@ public final class NexusPayment: @unchecked Sendable {
     public func initialize(config: PaymentConfig) {
         self.config = config
         products.removeAll()
+        apiProducts.removeAll()
         relatedProducts.removeAll()
         useTestingProducts = false
         useTestingRelatedProducts = false
@@ -68,6 +70,7 @@ public final class NexusPayment: @unchecked Sendable {
 
     public func setProductsForTesting(_ products: [Product]) {
         self.products = products
+        self.apiProducts = products
         self.useTestingProducts = true
     }
 
@@ -79,10 +82,24 @@ public final class NexusPayment: @unchecked Sendable {
     public func getProducts(forceRefresh: Bool = false) async throws -> [Product] {
         if useTestingProducts { return products }
         if !forceRefresh && !products.isEmpty { return products }
-        let coreConfig = try NexusCoreUser.shared.getSdkConfig()
-        let response = try await ProductAPI(config: coreConfig).getProducts()
-        products = try await mergeProviderProducts(response)
+        let loadedAPIProducts = try await getAPIProducts(forceRefresh: forceRefresh)
+        products = await enrichProductsWithAppStore(loadedAPIProducts)
         return products
+    }
+
+    func getAPIProducts(forceRefresh: Bool = false) async throws -> [Product] {
+        if useTestingProducts { return apiProducts }
+        if !forceRefresh && !apiProducts.isEmpty { return apiProducts }
+        let coreConfig = try NexusCoreUser.shared.getSdkConfig()
+        apiProducts = try await ProductAPI(config: coreConfig).getProducts()
+        products = apiProducts
+        return apiProducts
+    }
+
+    func enrichProductsWithAppStore(_ apiProducts: [Product]) async -> [Product] {
+        let enrichedProducts = await mergeProviderProducts(apiProducts)
+        products = enrichedProducts
+        return enrichedProducts
     }
 
     public func getRelatedProducts(forceRefresh: Bool = false) async throws -> [RelatedProduct] {
@@ -211,42 +228,25 @@ public final class NexusPayment: @unchecked Sendable {
         }
     }
 
-    private func mergeProviderProducts(_ apiProducts: [Product]) async throws -> [Product] {
-        let paymentConfig = try requireConfig()
+    private func mergeProviderProducts(_ apiProducts: [Product]) async -> [Product] {
+        guard !apiProducts.isEmpty else { return [] }
+        guard let paymentConfig = config else { return apiProducts }
         let requestedChannels = activeSubscriptionPageConfig?.paymentChannels.isEmpty == false
             ? activeSubscriptionPageConfig!.paymentChannels
             : paymentConfig.enabledChannels
         guard requestedChannels.contains(.appStore) else { return apiProducts }
         guard let provider = appStoreProvider else {
-            throw PaymentError.providerNotRegistered("App Store payment provider is not registered")
+            return apiProducts
         }
-        let providerProducts = try await provider.getProducts(productIds: apiProducts.map(\.marketProductId))
-        guard !providerProducts.isEmpty else {
-            throw PaymentError.apiError("No configured products are available from the App Store")
+        do {
+            let providerProducts = try await provider.getProducts(productIds: apiProducts.map(\.marketProductId))
+            guard !providerProducts.isEmpty else {
+                return apiProducts
+            }
+            return ProductDetailsMerger.merge(apiProducts: apiProducts, storeProducts: providerProducts)
+        } catch {
+            return apiProducts
         }
-        let providerProductsById = Dictionary(uniqueKeysWithValues: providerProducts.map { ($0.marketProductId, $0) })
-        let merged = apiProducts.compactMap { apiProduct -> Product? in
-            guard let providerProduct = providerProductsById[apiProduct.marketProductId] else { return nil }
-            return Product(
-                marketProductId: apiProduct.marketProductId,
-                name: providerProduct.name.isEmpty ? apiProduct.name : providerProduct.name,
-                description: apiProduct.description.isEmpty ? providerProduct.description : apiProduct.description,
-                productType: apiProduct.productType == .unknown ? providerProduct.productType : apiProduct.productType,
-                coinsGranted: apiProduct.coinsGranted,
-                price: providerProduct.price ?? apiProduct.price,
-                currency: providerProduct.currency ?? apiProduct.currency,
-                localizedPrice: providerProduct.localizedPrice ?? apiProduct.localizedPrice,
-                subscriptionPeriod: providerProduct.subscriptionPeriod ?? apiProduct.subscriptionPeriod,
-                trialPeriod: providerProduct.trialPeriod ?? apiProduct.trialPeriod,
-                hasTrial: apiProduct.hasTrial || providerProduct.hasTrial,
-                entitlementId: apiProduct.entitlementId,
-                benefits: apiProduct.benefits
-            )
-        }
-        guard !merged.isEmpty else {
-            throw PaymentError.apiError("Nexus products do not match any App Store products")
-        }
-        return merged
     }
 
     private func currentUid() async throws -> String {
@@ -525,7 +525,7 @@ final class ProductAPI: @unchecked Sendable {
     }
 
     func getProducts() async throws -> [Product] {
-        guard let url = URL(string: config.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/m/v7/iap/list") else {
+        guard let url = URL(string: config.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/m/v6/iap/list") else {
             throw PaymentError.invalidConfig("Invalid apiBaseUrl")
         }
         var request = URLRequest(url: url)

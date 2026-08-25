@@ -30,6 +30,7 @@ final class NexusRemoteDemoViewController: UIViewController {
     private let encryptionKeyField = UITextField()
     private let grantTierField = UITextField()
     private let bindEmailField = UITextField()
+    private let passwordField = UITextField()
     private let consumeCostField = UITextField()
     private let consumeRemarkField = UITextField()
     private let dataEyeAppIdField = UITextField()
@@ -118,6 +119,7 @@ final class NexusRemoteDemoViewController: UIViewController {
         stack.addArrangedSubview(section("CoreUserSDK", views: [
             labeledControl("Login Type", loginTypeControl),
             labeledField("Bind Email", bindEmailField),
+            labeledField("Password", passwordField),
             labeledField("Consume Cost", consumeCostField),
             labeledField("Consume Remark", consumeRemarkField),
             button("Run CoreUser Full Flow", action: #selector(runCoreUserFullFlowTapped)),
@@ -202,6 +204,8 @@ final class NexusRemoteDemoViewController: UIViewController {
         grantTierField.placeholder = "Optional: 1 / 2 / 3"
         bindEmailField.placeholder = "user@example.com"
         bindEmailField.text = "user@example.com"
+        passwordField.placeholder = "Required for binding and email login"
+        passwordField.isSecureTextEntry = true
         consumeCostField.placeholder = "1"
         consumeCostField.text = "1"
         consumeCostField.keyboardType = .decimalPad
@@ -232,6 +236,7 @@ final class NexusRemoteDemoViewController: UIViewController {
             encryptionKeyField,
             grantTierField,
             bindEmailField,
+            passwordField,
             consumeCostField,
             consumeRemarkField,
             dataEyeAppIdField,
@@ -279,7 +284,7 @@ final class NexusRemoteDemoViewController: UIViewController {
                     append("CoreUser full flow started. deviceId=\(deviceId), loginType=\(loginType.rawValue)")
                 }
 
-                let loggedInUser = try await NexusCoreUser.shared.silentLogin(loginType: loginType)
+                let loggedInUser = try await login(loginType: loginType)
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(loggedInUser)
                     append("Full flow login success: \(format(user: loggedInUser))")
@@ -396,7 +401,7 @@ final class NexusRemoteDemoViewController: UIViewController {
             do {
                 try ensureCoreUserInitialized()
                 let loginType = selectedLoginType()
-                let user = try await NexusCoreUser.shared.silentLogin(loginType: loginType)
+                let user = try await login(loginType: loginType)
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(user)
                     append("Login success type=\(loginType.rawValue) \(format(user: user))")
@@ -444,10 +449,11 @@ final class NexusRemoteDemoViewController: UIViewController {
 
     @objc private func bindEmailDirectlyTapped() {
         let email = bindEmailField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let password = passwordField.text ?? ""
         Task {
             do {
                 try ensureCoreUserInitialized()
-                let result = try await NexusCoreUser.shared.bindEmail(email)
+                let result = try await NexusCoreUser.shared.bindEmail(email, password: password)
                 let user = try NexusCoreUser.shared.getCurrentUser()
                 await MainActor.run {
                     append("Bind email success uid=\(result.uid), account=\(result.accountValue), bound=\(result.bound)")
@@ -456,6 +462,24 @@ final class NexusRemoteDemoViewController: UIViewController {
             } catch {
                 await MainActor.run { append("Bind email failed: \(error.localizedDescription)") }
             }
+        }
+    }
+
+    private func login(loginType: LoginType) async throws -> SDKUser {
+        switch loginType {
+        case .guest:
+            return try await NexusCoreUser.shared.silentLogin()
+        case .email:
+            return try await NexusCoreUser.shared.loginWithEmail(
+                email: bindEmailField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                password: passwordField.text ?? ""
+            )
+        case .phone:
+            throw NSError(
+                domain: "NexusRemoteDemo",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Use loginWithPhone(phonePrefix:phone:password:) with phone input"]
+            )
         }
     }
 
@@ -695,7 +719,7 @@ final class NexusRemoteDemoViewController: UIViewController {
     @objc private func showSubscriptionTapped() {
         do {
             let config = try SubscriptionPageConfig(
-                templateId: "ios_demo",
+                templateId: SubscriptionPageTemplateId.aurora.rawValue,
                 scene: "demo",
                 title: "Nexus Pro",
                 benefitDescription: "One membership unlocks every app in this account.",

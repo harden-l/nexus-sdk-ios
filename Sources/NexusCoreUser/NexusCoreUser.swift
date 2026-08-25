@@ -5,7 +5,7 @@ import UIKit
 
 public final class NexusCoreUser: @unchecked Sendable {
     public static let shared = NexusCoreUser()
-    public static let version = "0.0.7"
+    public static let version = "0.0.8"
 
     private var config: CoreUserConfig?
     private var storage: CoreUserStorage?
@@ -41,6 +41,57 @@ public final class NexusCoreUser: @unchecked Sendable {
     }
 
     public func silentLogin(loginType: LoginType = .guest) async throws -> SDKUser {
+        guard loginType == .guest else {
+            throw CoreUserError.invalidConfig("silentLogin only supports guest login; use loginWithEmail or loginWithPhone")
+        }
+        return try await login(loginType: .guest)
+    }
+
+    public func loginWithEmail(email: String, password: String) async throws -> SDKUser {
+        try await login(loginType: .email, email: email, password: password)
+    }
+
+    public func loginWithEmail(
+        email: String,
+        password: String,
+        completion: @escaping @Sendable (CoreUserResult<SDKUser>) -> Void
+    ) {
+        Task {
+            do { completion(.success(try await loginWithEmail(email: email, password: password))) }
+            catch { completion(.failure(error)) }
+        }
+    }
+
+    public func loginWithPhone(phonePrefix: String, phone: String, password: String) async throws -> SDKUser {
+        try await login(loginType: .phone, phonePrefix: phonePrefix, phone: phone, password: password)
+    }
+
+    public func loginWithPhone(
+        phonePrefix: String,
+        phone: String,
+        password: String,
+        completion: @escaping @Sendable (CoreUserResult<SDKUser>) -> Void
+    ) {
+        Task {
+            do {
+                completion(.success(try await loginWithPhone(
+                    phonePrefix: phonePrefix,
+                    phone: phone,
+                    password: password
+                )))
+            } catch {
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func login(
+        loginType: LoginType,
+        email: String? = nil,
+        phonePrefix: String? = nil,
+        phone: String? = nil,
+        password: String? = nil
+    ) async throws -> SDKUser {
         let storage = try requireStorage()
         let api = try requireAPI()
         let deviceId = storage.getOrCreateDeviceId()
@@ -49,7 +100,11 @@ public final class NexusCoreUser: @unchecked Sendable {
             deviceId: deviceId,
             uid: existingUid,
             loginType: loginType,
-            att: storage.isLoginAttributionEnabled() ? 1 : 0
+            att: storage.isLoginAttributionEnabled() ? 1 : 0,
+            email: email,
+            phonePrefix: phonePrefix,
+            phone: phone,
+            password: password
         )
         let user = (try? await api.getUserInfo(uid: login.uid, deviceId: deviceId))
             ?? SDKUser(uid: login.uid, deviceId: deviceId, userInfoSynced: false)
@@ -89,12 +144,17 @@ public final class NexusCoreUser: @unchecked Sendable {
         }
     }
 
-    public func bindEmail(_ email: String) async throws -> BindAccountResult {
-        try await bindAccount(BindAccountParams(accountType: .email, email: email))
+    public func bindEmail(_ email: String, password: String) async throws -> BindAccountResult {
+        try await bindAccount(BindAccountParams(accountType: .email, email: email, password: password))
     }
 
-    public func bindPhone(phonePrefix: String, phone: String) async throws -> BindAccountResult {
-        try await bindAccount(BindAccountParams(accountType: .phone, phonePrefix: phonePrefix, phone: phone))
+    public func bindPhone(phonePrefix: String, phone: String, password: String) async throws -> BindAccountResult {
+        try await bindAccount(BindAccountParams(
+            accountType: .phone,
+            phonePrefix: phonePrefix,
+            phone: phone,
+            password: password
+        ))
     }
 
     public func bindAccount(_ params: BindAccountParams) async throws -> BindAccountResult {
@@ -172,11 +232,11 @@ public final class NexusCoreUser: @unchecked Sendable {
                     onCancel: {
                         completion(BindEmailFlowResult(status: .cancelled, user: user))
                     },
-                    onSubmit: { [weak self] email in
+                    onSubmit: { [weak self] email, password in
                         guard let self else { return }
                         Task {
                             do {
-                                let result = try await self.bindEmail(email)
+                                let result = try await self.bindEmail(email, password: password)
                                 let updated = try self.getCurrentUser()
                                 await MainActor.run {
                                     completion(BindEmailFlowResult(status: .bound, user: updated, bindResult: result))

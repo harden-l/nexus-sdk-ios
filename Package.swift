@@ -19,7 +19,11 @@ let package = Package(
     targets: [
         .target(name: "NexusCoreUser"),
         .target(name: "NexusGrowthAnalyticsAd", dependencies: ["NexusCoreUser"]),
-        .target(name: "NexusPayment", dependencies: ["NexusCoreUser", "NexusGrowthAnalyticsAd"]),
+        .target(
+            name: "NexusPayment",
+            dependencies: ["NexusCoreUser", "NexusGrowthAnalyticsAd"],
+            resources: [.process("Resources")]
+        ),
         .target(name: "NexusCrossPromo", dependencies: ["NexusCoreUser", "NexusGrowthAnalyticsAd"]),
         .target(
             name: "NexusGrowthAnalyticsAdDataEye",

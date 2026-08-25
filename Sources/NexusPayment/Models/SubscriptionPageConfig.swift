@@ -23,7 +23,7 @@ public struct SubscriptionPageConfig: Equatable, Sendable {
     public var privacyText: String
 
     public init(
-        templateId: String = "",
+        templateId: String = SubscriptionPageTemplateId.aurora.rawValue,
         scene: String = "",
         title: String = "Upgrade to Pro",
         benefitDescription: String = "Purchase one product and get VIP access to all other products.",

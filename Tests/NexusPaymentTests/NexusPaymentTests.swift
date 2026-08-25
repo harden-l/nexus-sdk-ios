@@ -12,6 +12,8 @@ final class NexusPaymentTests: XCTestCase {
 
     func testSubscriptionPageLegalLinkDefaultsAndValidation() throws {
         let config = try SubscriptionPageConfig()
+        XCTAssertEqual(config.templateId, SubscriptionPageTemplateId.aurora.rawValue)
+        XCTAssertEqual(Set(SubscriptionPageTemplateId.allCases.map(\.rawValue)), Set(["aurora", "midnight", "minimal"]))
         XCTAssertTrue(config.showTerms)
         XCTAssertTrue(config.showPrivacy)
         XCTAssertEqual(config.termsUrl, SubscriptionPageConfig.defaultTermsUrl)
@@ -83,7 +85,7 @@ final class NexusPaymentTests: XCTestCase {
         configuration.protocolClasses = [ProductURLProtocol.self]
         let session = URLSession(configuration: configuration)
         ProductURLProtocol.requestHandler = { request in
-            XCTAssertEqual(request.url?.path, "/m/v7/iap/list")
+            XCTAssertEqual(request.url?.path, "/m/v6/iap/list")
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Encrypt"), "0")
             let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","product_type":2,"coins_granted":100.25}]}}"#
@@ -108,6 +110,36 @@ final class NexusPaymentTests: XCTestCase {
 
         XCTAssertEqual(products.first?.marketProductId, "vip_month")
         XCTAssertEqual(products.first?.coinsGranted, 100.25)
+    }
+
+    func testProductDetailsMergerKeepsUnmatchedAPIProducts() {
+        let apiProducts = [
+            Product(marketProductId: "monthly", name: "Monthly API", description: "API benefits", productType: .subscription, coinsGranted: 20),
+            Product(marketProductId: "coins", name: "Coins API", productType: .consumable, coinsGranted: 50, price: "1.99")
+        ]
+        let storeProducts = [
+            Product(marketProductId: "monthly", name: "Monthly Store", description: "Store description", productType: .subscription, price: "9.99", currency: "USD", localizedPrice: "$9.99", subscriptionPeriod: "P1M")
+        ]
+
+        let merged = ProductDetailsMerger.merge(apiProducts: apiProducts, storeProducts: storeProducts)
+
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged[0].name, "Monthly Store")
+        XCTAssertEqual(merged[0].description, "API benefits")
+        XCTAssertEqual(merged[0].coinsGranted, 20)
+        XCTAssertEqual(merged[0].localizedPrice, "$9.99")
+        XCTAssertEqual(merged[1], apiProducts[1])
+    }
+
+    func testProductDetailsMergerReturnsAPIProductsWhenStoreIsEmpty() {
+        let apiProducts = [
+            Product(marketProductId: "coins", name: "Coins API", productType: .consumable, coinsGranted: 50)
+        ]
+
+        XCTAssertEqual(
+            ProductDetailsMerger.merge(apiProducts: apiProducts, storeProducts: []),
+            apiProducts
+        )
     }
 
     func testMockPurchaseGrantsEntitlement() async throws {
