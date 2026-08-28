@@ -81,6 +81,8 @@ public struct SDKUser: Codable, Equatable, Sendable {
     public var emailBound: Bool
     public var phoneBound: Bool
     public var balance: Double
+    public var isVip: Bool
+    public var vipExpiredAt: Int64
     public var userInfoSynced: Bool
 
     public init(
@@ -91,6 +93,8 @@ public struct SDKUser: Codable, Equatable, Sendable {
         emailBound: Bool = false,
         phoneBound: Bool = false,
         balance: Double = 0,
+        isVip: Bool = false,
+        vipExpiredAt: Int64 = 0,
         userInfoSynced: Bool = false
     ) {
         self.uid = uid
@@ -100,7 +104,63 @@ public struct SDKUser: Codable, Equatable, Sendable {
         self.emailBound = emailBound
         self.phoneBound = phoneBound
         self.balance = balance
+        self.isVip = isVip
+        self.vipExpiredAt = vipExpiredAt
         self.userInfoSynced = userInfoSynced
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case uid, deviceId, email, phone, emailBound, phoneBound, balance, isVip, vipExpiredAt, userInfoSynced
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        uid = try values.decode(String.self, forKey: .uid)
+        deviceId = try values.decode(String.self, forKey: .deviceId)
+        email = try values.decodeIfPresent(String.self, forKey: .email)
+        phone = try values.decodeIfPresent(String.self, forKey: .phone)
+        emailBound = try values.decodeIfPresent(Bool.self, forKey: .emailBound) ?? false
+        phoneBound = try values.decodeIfPresent(Bool.self, forKey: .phoneBound) ?? false
+        balance = try values.decodeIfPresent(Double.self, forKey: .balance) ?? 0
+        isVip = try values.decodeIfPresent(Bool.self, forKey: .isVip) ?? false
+        vipExpiredAt = try values.decodeIfPresent(Int64.self, forKey: .vipExpiredAt) ?? 0
+        userInfoSynced = try values.decodeIfPresent(Bool.self, forKey: .userInfoSynced) ?? false
+    }
+}
+
+public struct WeeklyPointsInfo: Codable, Equatable, Sendable {
+    public var isVip: Bool
+    public var marketProductId: String
+    public var weeklyPoints: Int
+    public var canClaim: Bool
+    public var cannotClaimReason: String
+
+    public init(
+        isVip: Bool,
+        marketProductId: String,
+        weeklyPoints: Int,
+        canClaim: Bool,
+        cannotClaimReason: String
+    ) {
+        self.isVip = isVip
+        self.marketProductId = marketProductId
+        self.weeklyPoints = weeklyPoints
+        self.canClaim = canClaim
+        self.cannotClaimReason = cannotClaimReason
+    }
+}
+
+public struct WeeklyPointsClaimResult: Codable, Equatable, Sendable {
+    public var success: Bool
+    public var points: Int
+    public var transactionId: String
+    public var claimTime: String
+
+    public init(success: Bool, points: Int, transactionId: String, claimTime: String) {
+        self.success = success
+        self.points = points
+        self.transactionId = transactionId
+        self.claimTime = claimTime
     }
 }
 

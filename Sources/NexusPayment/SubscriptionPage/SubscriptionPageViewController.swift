@@ -11,6 +11,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     private var selectedProduct: Product?
     private var selectedChannel: PaymentChannel?
     private var displayedChannels: [PaymentChannel] = []
+    private var weeklyPointsInfo: WeeklyPointsInfo?
     private var loadGeneration = 0
 
     private let scrollView = UIScrollView()
@@ -269,13 +270,17 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
                 async let enrichedProducts = sdk.enrichProductsWithAppStore(loadedProducts)
                 async let loadedRelated = loadRelatedProducts()
-                let (enriched, related) = await (enrichedProducts, loadedRelated)
+                async let loadedWeeklyPoints = loadWeeklyPointsInfo()
+                let (enriched, related, weeklyPoints) = await (enrichedProducts, loadedRelated, loadedWeeklyPoints)
                 await MainActor.run {
                     guard generation == self.loadGeneration else { return }
-                    let changed = enriched != self.products || related != self.relatedProducts
+                    let changed = enriched != self.products ||
+                        related != self.relatedProducts ||
+                        weeklyPoints != self.weeklyPointsInfo
                     guard changed else { return }
                     self.applyProducts(enriched, preserveSelection: true)
                     self.relatedProducts = related
+                    self.weeklyPointsInfo = weeklyPoints
                     self.render(preserveScrollPosition: true)
                 }
             } catch {
@@ -289,6 +294,10 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
     private func loadRelatedProducts() async -> [RelatedProduct] {
         (try? await sdk.getRelatedProducts(forceRefresh: true)) ?? []
+    }
+
+    private func loadWeeklyPointsInfo() async -> WeeklyPointsInfo? {
+        try? await sdk.getWeeklyPointsInfo()
     }
 
     private func applyProducts(_ loadedProducts: [Product], preserveSelection: Bool) {
@@ -307,20 +316,25 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         let oneTimeProducts = products.filter { $0.productType != .subscription }
         switch theme.id {
         case .midnight:
-            addProductGroup(title: "Membership plans", subtitle: "Recurring access to premium creative tools", products: subscriptions)
             addCurrentAppBenefits()
-            addSharedApps()
+            addProductGroup(title: "Membership plans", subtitle: "Recurring access to premium creative tools", products: subscriptions)
+            addWeeklyPointsSection()
             addProductGroup(title: "Creation credits", subtitle: "One-time credits for premium generations and exports", products: oneTimeProducts)
+            addSharedApps()
         case .minimal:
+            addMembershipStatus()
             addCurrentAppBenefits()
+            addWeeklyPointsSection()
             addProductGroup(title: "Membership plans", subtitle: "Recurring access to premium creative tools", products: subscriptions)
-            addSharedApps()
             addProductGroup(title: "Creation credits", subtitle: "One-time credits for premium generations and exports", products: oneTimeProducts)
+            addSharedApps()
         case .aurora:
+            addMembershipStatus()
             addCurrentAppBenefits()
-            addSharedApps()
+            addWeeklyPointsSection()
             addProductGroup(title: "Membership plans", subtitle: "Recurring access to premium creative tools", products: subscriptions)
             addProductGroup(title: "Creation credits", subtitle: "One-time credits for premium generations and exports", products: oneTimeProducts)
+            addSharedApps()
         }
 
         if pageConfig.showPaymentChannel { addPaymentChannels() }
@@ -334,7 +348,9 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     }
 
     private func addCurrentAppBenefits() {
-        guard !pageConfig.benefitDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let hasDescription = !pageConfig.benefitDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasBenefits = pageConfig.benefits.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard hasDescription || hasBenefits else { return }
         contentStack.addArrangedSubview(currentAppBenefitsCard())
     }
 
@@ -343,7 +359,9 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         content.axis = .vertical
         content.spacing = 11
         content.addArrangedSubview(textLabel(currentBenefitHeading(), size: 17, color: theme.primary, weight: .bold))
-        content.addArrangedSubview(textLabel(pageConfig.benefitDescription, size: 16, color: theme.body))
+        if !pageConfig.benefitDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            content.addArrangedSubview(textLabel(pageConfig.benefitDescription, size: 16, color: theme.body))
+        }
         if !pageConfig.benefits.filter({ !$0.isEmpty }).isEmpty {
             content.addArrangedSubview(benefitTags())
         }
@@ -403,6 +421,174 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             scroll.heightAnchor.constraint(equalToConstant: 31)
         ])
         return scroll
+    }
+
+    private func addMembershipStatus() {
+        guard let user = try? NexusCoreUser.shared.getCurrentUser() else { return }
+        let icon = UIImageView(image: UIImage(systemName: user.isVip ? "diamond.fill" : "person.crop.circle"))
+        icon.tintColor = theme.primary
+        icon.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 42),
+            icon.heightAnchor.constraint(equalToConstant: 42)
+        ])
+
+        let membership = UIStackView(arrangedSubviews: [
+            textLabel(user.isVip ? "VIP active" : "Current membership", size: 16, color: theme.title, weight: .bold),
+            textLabel(user.isVip ? "Your premium benefits are active" : "Choose a plan to unlock more", size: 13, color: theme.muted)
+        ])
+        membership.axis = .vertical
+        membership.spacing = 3
+
+        let divider = UIView()
+        divider.backgroundColor = theme.border
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+
+        let balance = UIStackView(arrangedSubviews: [
+            textLabel("Balance", size: 12, color: theme.muted, alignment: .right),
+            textLabel(Self.balanceText(user.balance), size: 18, color: theme.primary, weight: .bold, alignment: .right)
+        ])
+        balance.axis = .vertical
+        balance.spacing = 2
+        balance.setContentHuggingPriority(.required, for: .horizontal)
+
+        let row = UIStackView(arrangedSubviews: [icon, membership, divider, balance])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        contentStack.addArrangedSubview(card(
+            row,
+            background: theme.surface,
+            radius: theme.id == .minimal ? 4 : 18,
+            padding: UIEdgeInsets(top: 14, left: 15, bottom: 14, right: 15),
+            border: user.isVip ? theme.primary : theme.border
+        ))
+    }
+
+    private static func balanceText(_ value: Double) -> String {
+        value.rounded() == value ? String(Int64(value)) : String(format: "%.2f", value)
+    }
+
+    private func addWeeklyPointsSection() {
+        guard let info = weeklyPointsInfo else { return }
+        let configuredPoints = products
+            .filter { $0.productType == .subscription && $0.weeklyPointsEnabled }
+            .map(\.weeklyPoints)
+            .max() ?? 0
+        guard configuredPoints > 0 || info.weeklyPoints > 0 else { return }
+        let points = max(configuredPoints, info.weeklyPoints)
+
+        let iconName = theme.id == .midnight ? "gift.fill" : "calendar.badge.clock"
+        let icon = UIImageView(image: UIImage(systemName: iconName))
+        icon.tintColor = theme.id == .minimal ? theme.accent : theme.primary
+        icon.backgroundColor = theme.tagSurface
+        icon.contentMode = .center
+        icon.layer.cornerRadius = theme.id == .minimal ? 10 : 16
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 52),
+            icon.heightAnchor.constraint(equalToConstant: 52)
+        ])
+
+        let detail: String
+        if info.canClaim {
+            detail = "\(points) points ready to claim"
+        } else if info.cannotClaimReason == "already_claimed" {
+            detail = "Claimed for this week"
+        } else if info.cannotClaimReason == "no_valid_subscription" {
+            detail = "Subscribe to earn \(points) points weekly"
+        } else {
+            detail = "\(points) points per week"
+        }
+        let copy = UIStackView(arrangedSubviews: [
+            textLabel("Weekly points", size: 16, color: theme.title, weight: .bold),
+            textLabel(detail, size: 13, color: theme.muted, maxLines: 2)
+        ])
+        copy.axis = .vertical
+        copy.spacing = 4
+
+        let needsSubscription = !info.canClaim && info.cannotClaimReason == "no_valid_subscription"
+        let claim = UIButton(type: .system)
+        claim.setTitle(info.canClaim ? "Claim" : (needsSubscription ? "Subscribe" : "View status"), for: .normal)
+        claim.titleLabel?.font = .boldSystemFont(ofSize: 14)
+        claim.tintColor = (info.canClaim || needsSubscription) ? (theme.dark ? theme.pageBackground : .white) : theme.muted
+        claim.backgroundColor = (info.canClaim || needsSubscription) ? theme.primary : theme.elevatedSurface
+        claim.layer.cornerRadius = theme.id == .midnight ? 7 : 14
+        claim.layer.borderWidth = 1
+        claim.layer.borderColor = ((info.canClaim || needsSubscription) ? theme.primary : theme.border).cgColor
+        claim.isEnabled = info.canClaim || needsSubscription
+        claim.widthAnchor.constraint(equalToConstant: 94).isActive = true
+        claim.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        claim.addAction(UIAction { [weak self] _ in
+            if info.canClaim { self?.claimWeeklyPointsTapped() } else { self?.guideToWeeklySubscription() }
+        }, for: .touchUpInside)
+
+        let row = UIStackView(arrangedSubviews: [icon, copy, claim])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        let panel = card(
+            row,
+            background: theme.id == .midnight ? theme.elevatedSurface : theme.surface,
+            radius: theme.id == .aurora ? 18 : (theme.id == .midnight ? 8 : 4),
+            padding: UIEdgeInsets(top: 13, left: 14, bottom: 13, right: 12),
+            border: info.canClaim ? theme.primary : theme.border
+        )
+        contentStack.addArrangedSubview(panel)
+        if info.canClaim {
+            UIView.animate(withDuration: 0.7, delay: 0, options: [.autoreverse, .curveEaseInOut]) {
+                panel.alpha = 0.88
+            } completion: { _ in
+                panel.alpha = 1
+            }
+        }
+    }
+
+    private func claimWeeklyPointsTapped() {
+        guard let info = weeklyPointsInfo, info.canClaim else { return }
+        dispatchEvent(name: .weeklyPointsClaimClick, productId: info.marketProductId, state: .ready)
+        Task {
+            do {
+                let result = try await sdk.claimWeeklyPoints(marketProductId: info.marketProductId)
+                await MainActor.run {
+                    self.weeklyPointsInfo = WeeklyPointsInfo(
+                        isVip: info.isVip,
+                        marketProductId: info.marketProductId,
+                        weeklyPoints: info.weeklyPoints,
+                        canClaim: false,
+                        cannotClaimReason: "already_claimed"
+                    )
+                    self.render(preserveScrollPosition: true)
+                    self.dispatchEvent(
+                        name: .weeklyPointsClaimSuccess,
+                        productId: info.marketProductId,
+                        state: .success,
+                        params: ["points": result.points, "transaction_id": result.transactionId]
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    self.dispatchEvent(
+                        name: .weeklyPointsClaimFailed,
+                        productId: info.marketProductId,
+                        state: .failed,
+                        params: ["message": error.localizedDescription]
+                    )
+                    let alert = UIAlertController(title: "Unable to claim points", message: error.localizedDescription, preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    self.present(alert, animated: true)
+                }
+            }
+        }
+    }
+
+    private func guideToWeeklySubscription() {
+        guard let product = products.first(where: {
+            $0.productType == .subscription && $0.weeklyPointsEnabled && $0.weeklyPoints > 0
+        }) else { return }
+        selectProduct(product)
+        guard let card = productCards[product.marketProductId] else { return }
+        let rect = card.convert(card.bounds, to: scrollView)
+        scrollView.setContentOffset(CGPoint(x: 0, y: max(0, rect.minY - 24)), animated: true)
     }
 
     private func addSharedApps() {
@@ -622,13 +808,27 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             let card = ProductOptionCard(
                 product: product,
                 theme: theme,
-                image: paywallImage(for: product.productType)
+                image: paywallImage(for: product.productType),
+                purchaseBadge: purchaseStateBadge(product)
             )
             card.isSelected = product.marketProductId == selectedProduct?.marketProductId
             card.addAction(UIAction { [weak self] _ in self?.selectProduct(product) }, for: .touchUpInside)
             productCards[product.marketProductId] = card
             contentStack.addArrangedSubview(card)
         }
+    }
+
+    private func purchaseStateBadge(_ product: Product) -> String? {
+        if product.productType == .subscription,
+           weeklyPointsInfo?.isVip == true,
+           weeklyPointsInfo?.marketProductId == product.marketProductId {
+            return "CURRENT PLAN"
+        }
+        guard let entitlement = sdk.getEntitlements().first(where: {
+            $0.productId == product.marketProductId ||
+                (product.entitlementId != nil && $0.entitlementId == product.entitlementId)
+        }), entitlement.active else { return nil }
+        return product.productType == .subscription ? "CURRENT PLAN" : "OWNED"
     }
 
     private func selectProduct(_ product: Product) {
@@ -1036,9 +1236,11 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 private final class ProductOptionCard: UIControl {
     private let theme: SubscriptionPageTheme
     private let radio = SelectionIndicatorView()
+    private let purchaseBadge: String?
 
-    init(product: Product, theme: SubscriptionPageTheme, image: UIImage?) {
+    init(product: Product, theme: SubscriptionPageTheme, image: UIImage?, purchaseBadge: String?) {
         self.theme = theme
+        self.purchaseBadge = purchaseBadge
         super.init(frame: .zero)
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -1136,7 +1338,9 @@ private final class ProductOptionCard: UIControl {
         ].compactMap { $0 }.joined(separator: "  •  ")
         if !metadata.isEmpty { column.addArrangedSubview(label(metadata, size: 12, color: theme.muted, lines: 2)) }
         column.addArrangedSubview(label(productValueLine(product), size: 12, color: theme.muted, weight: .semibold, lines: 2))
-        if let coins = product.coinsGranted, coins > 0 {
+        if product.productType == .subscription, product.weeklyPointsEnabled, product.weeklyPoints > 0 {
+            column.addArrangedSubview(label("\(product.weeklyPoints) points every week", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
+        } else if let coins = product.coinsGranted, coins > 0 {
             column.addArrangedSubview(label("Get \(CoinAmountFormatter.displayText(coins)) credits after purchase", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
         }
         return column
@@ -1147,7 +1351,8 @@ private final class ProductOptionCard: UIControl {
     }
 
     private func badgeText(_ product: Product) -> String {
-        switch product.productType {
+        if let purchaseBadge { return purchaseBadge }
+        return switch product.productType {
         case .subscription: product.hasTrial ? "FREE TRIAL" : "MEMBERSHIP"
         case .consumable: "CREATION CREDITS"
         case .iap: "ONE TIME"

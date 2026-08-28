@@ -124,7 +124,7 @@
       "location" : "https://github.com/harden-l/nexus-sdk-ios.git",
       "state" : {
         "revision" : "ebfec230334af6601d5672ba0e33764857155111",
-        "version" : "0.0.8"
+        "version" : "0.0.9"
       }
     },
     {
@@ -133,7 +133,7 @@
       "location" : "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git",
       "state" : {
         "revision" : "03fd017860f567ee1d2fe346107bab92dc79708f",
-        "version" : "0.0.8"
+        "version" : "0.0.9"
       }
     },
     {
@@ -142,7 +142,7 @@
       "location" : "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git",
       "state" : {
         "revision" : "87f57b9eaf446ab797f77761420081b39d867f91",
-        "version" : "0.0.8"
+        "version" : "0.0.9"
       }
     },
     {
@@ -151,7 +151,7 @@
       "location" : "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git",
       "state" : {
         "revision" : "1fe7f8b14ede3383c8876ebd774b25fc9ba9c430",
-        "version" : "0.0.8"
+        "version" : "0.0.9"
       }
     },
     {

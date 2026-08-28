@@ -5,7 +5,7 @@ import UIKit
 
 public final class NexusCoreUser: @unchecked Sendable {
     public static let shared = NexusCoreUser()
-    public static let version = "0.0.8"
+    public static let version = "0.0.11"
 
     private var config: CoreUserConfig?
     private var storage: CoreUserStorage?
@@ -24,8 +24,26 @@ public final class NexusCoreUser: @unchecked Sendable {
         return config
     }
 
-    public func getConfig() throws -> [String: Any] {
-        try requireStorage().getLoginConfig()
+    public func fetchSwitchConfig() async throws -> String {
+        let storage = try requireStorage()
+        let user = storage.getUser()
+        let value = try await requireAPI().getSwitchConfig(
+            att: isLoginAttributionEnabled() ? 1 : 0,
+            uid: user?.uid
+        )
+        storage.saveSwitchConfig(value)
+        return value
+    }
+
+    public func fetchSwitchConfig(completion: @escaping @Sendable (CoreUserResult<String>) -> Void) {
+        Task {
+            do { completion(.success(try await fetchSwitchConfig())) }
+            catch { completion(.failure(error)) }
+        }
+    }
+
+    public func getSwitchConfig() throws -> String? {
+        try requireStorage().getSwitchConfig()
     }
 
     public func getDeviceId() throws -> String {
@@ -108,7 +126,6 @@ public final class NexusCoreUser: @unchecked Sendable {
         )
         let user = (try? await api.getUserInfo(uid: login.uid, deviceId: deviceId))
             ?? SDKUser(uid: login.uid, deviceId: deviceId, userInfoSynced: false)
-        storage.saveLoginConfig(login.config)
         storage.saveUser(user)
         return user
     }
@@ -140,6 +157,35 @@ public final class NexusCoreUser: @unchecked Sendable {
     public func fetchUserInfo(completion: @escaping @Sendable (CoreUserResult<SDKUser>) -> Void) {
         Task {
             do { completion(.success(try await fetchUserInfo())) }
+            catch { completion(.failure(error)) }
+        }
+    }
+
+    public func getWeeklyPointsInfo() async throws -> WeeklyPointsInfo {
+        let current = try await currentUserOrLogin()
+        return try await requireAPI().getWeeklyPointsInfo(uid: current.uid)
+    }
+
+    public func getWeeklyPointsInfo(
+        completion: @escaping @Sendable (CoreUserResult<WeeklyPointsInfo>) -> Void
+    ) {
+        Task {
+            do { completion(.success(try await getWeeklyPointsInfo())) }
+            catch { completion(.failure(error)) }
+        }
+    }
+
+    public func claimWeeklyPoints(marketProductId: String? = nil) async throws -> WeeklyPointsClaimResult {
+        let current = try await currentUserOrLogin()
+        return try await requireAPI().claimWeeklyPoints(uid: current.uid, marketProductId: marketProductId)
+    }
+
+    public func claimWeeklyPoints(
+        marketProductId: String? = nil,
+        completion: @escaping @Sendable (CoreUserResult<WeeklyPointsClaimResult>) -> Void
+    ) {
+        Task {
+            do { completion(.success(try await claimWeeklyPoints(marketProductId: marketProductId))) }
             catch { completion(.failure(error)) }
         }
     }
@@ -283,7 +329,12 @@ public final class NexusCoreUser: @unchecked Sendable {
 
     private func clearLocalSession(storage: CoreUserStorage) {
         storage.clearUser()
-        storage.clearLoginConfig()
+        storage.clearSwitchConfig()
+    }
+
+    private func currentUserOrLogin() async throws -> SDKUser {
+        if let current = try getCurrentUser() { return current }
+        return try await silentLogin()
     }
 
     private func requireStorage() throws -> CoreUserStorage {

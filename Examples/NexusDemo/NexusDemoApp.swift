@@ -113,6 +113,7 @@ final class NexusDemoViewController: UIViewController {
             button("Show Bind Email Dialog", action: #selector(bindEmailDialogTapped)),
             button("Get Current User Cache", action: #selector(getCurrentUserTapped)),
             button("Get Login Config", action: #selector(getLoginConfigTapped)),
+            button("Fetch Switch Config", action: #selector(fetchSwitchConfigTapped)),
             button("Get SDK Config", action: #selector(getSdkConfigTapped)),
             button("Get Device ID", action: #selector(getDeviceIdTapped)),
             button("Enable Login Attribution", action: #selector(enableLoginAttributionTapped)),
@@ -141,6 +142,8 @@ final class NexusDemoViewController: UIViewController {
             button("Preview Aurora", action: #selector(showAuroraSubscriptionTapped)),
             button("Preview Midnight", action: #selector(showMidnightSubscriptionTapped)),
             button("Preview Minimal", action: #selector(showMinimalSubscriptionTapped)),
+            button("Get Weekly Points", action: #selector(getWeeklyPointsTapped)),
+            button("Claim Weekly Points", action: #selector(claimWeeklyPointsTapped)),
             button("Restore Purchases", action: #selector(restoreTapped)),
             button("Get Entitlements", action: #selector(entitlementsTapped))
         ]))
@@ -201,7 +204,6 @@ final class NexusDemoViewController: UIViewController {
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(loggedInUser)
                     append("Full flow login success: \(format(user: loggedInUser))")
-                    append("Full flow login config: \((try? NexusCoreUser.shared.getConfig()) ?? [:])")
                 }
 
                 let refreshedUser = try await NexusCoreUser.shared.fetchUserInfo()
@@ -379,9 +381,19 @@ final class NexusDemoViewController: UIViewController {
 
     @objc private func getLoginConfigTapped() {
         do {
-            append("Login config: \(try NexusCoreUser.shared.getConfig())")
         } catch {
             append("Get login config failed: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func fetchSwitchConfigTapped() {
+        Task {
+            do {
+                let config = try await NexusCoreUser.shared.fetchSwitchConfig()
+                await MainActor.run { append("Switch config: \(config)") }
+            } catch {
+                await MainActor.run { append("Fetch switch config failed: \(error.localizedDescription)") }
+            }
         }
     }
 
@@ -573,6 +585,30 @@ final class NexusDemoViewController: UIViewController {
                 await MainActor.run { append("Restore count=\(result.purchases.count)") }
             } catch {
                 await MainActor.run { append("Restore failed: \(error.localizedDescription)") }
+            }
+        }
+    }
+
+    @objc private func getWeeklyPointsTapped() {
+        Task {
+            do {
+                let info = try await NexusPayment.shared.getWeeklyPointsInfo()
+                await MainActor.run {
+                    append("Weekly points: product=\(info.marketProductId), points=\(info.weeklyPoints), canClaim=\(info.canClaim)")
+                }
+            } catch {
+                await MainActor.run { append("Get weekly points failed: \(error.localizedDescription)") }
+            }
+        }
+    }
+
+    @objc private func claimWeeklyPointsTapped() {
+        Task {
+            do {
+                let result = try await NexusPayment.shared.claimWeeklyPoints()
+                await MainActor.run { append("Claimed weekly points: success=\(result.success), points=\(result.points)") }
+            } catch {
+                await MainActor.run { append("Claim weekly points failed: \(error.localizedDescription)") }
             }
         }
     }

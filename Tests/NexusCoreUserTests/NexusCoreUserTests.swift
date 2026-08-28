@@ -4,7 +4,7 @@ import XCTest
 final class NexusCoreUserTests: XCTestCase {
     func testVersionAndConfigDefaults() throws {
         let config = try CoreUserConfig(productId: "7", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false)
-        XCTAssertEqual(NexusCoreUser.version, "0.0.8")
+        XCTAssertEqual(NexusCoreUser.version, "0.0.11")
         XCTAssertEqual(config.version.isEmpty, false)
         XCTAssertEqual(config.country.isEmpty, false)
         XCTAssertEqual(config.language.isEmpty, false)
@@ -37,10 +37,10 @@ final class NexusCoreUserTests: XCTestCase {
         XCTAssertEqual(decrypted, #"{"status":1,"hotUpdateUrl":""}"#)
     }
 
-    func testSilentLoginStoresUserAndDynamicConfig() async throws {
+    func testSilentLoginStoresUserAndSwitchConfigRemainsSeparate() async throws {
         MockURLProtocol.responses = [
             "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u1","feature":"on","coins":10}}"#,
-            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u1","email":"user@example.com","phone":"","email_bound":true,"phone_bound":false,"balance":88.75}}"#
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u1","email":"user@example.com","phone":"","email_bound":true,"phone_bound":false,"balance":88.75,"is_vip":true,"vip_expired_at":1780000000}}"#
         ]
         let session = URLSession(configuration: .mock)
         let sdk = NexusCoreUser.shared
@@ -51,8 +51,12 @@ final class NexusCoreUserTests: XCTestCase {
 
         XCTAssertEqual(user.uid, "u1")
         XCTAssertEqual(user.balance, 8_875)
-        XCTAssertEqual(try sdk.getConfig()["feature"] as? String, "on")
-        XCTAssertNil(try sdk.getConfig()["uid"])
+        XCTAssertTrue(user.isVip)
+        XCTAssertEqual(user.vipExpiredAt, 1_780_000_000)
+        MockURLProtocol.responses["/"] = #"{"status":1,"feature":{"enabled":true,"ratio":0.5}}"#
+        let switchConfig = try await sdk.fetchSwitchConfig()
+        XCTAssertEqual(switchConfig, #"{"status":1,"feature":{"enabled":true,"ratio":0.5}}"#)
+        XCTAssertEqual(try sdk.getSwitchConfig(), switchConfig)
     }
 
     func testSilentLoginSendsGrantTierCodeWhenConfigured() async throws {
@@ -178,7 +182,7 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.responses = [
             "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u-retained"}}"#,
             "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u-retained","email":"","phone":"","email_bound":false,"phone_bound":false,"balance":0}}"#,
-            "/m/v7/coins/deregister": #"{"code":1,"message":"success","data":{}}"#
+            "/m/v7/deregister": #"{"code":1,"message":"success","data":{}}"#
         ]
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
@@ -190,7 +194,7 @@ final class NexusCoreUserTests: XCTestCase {
         try await sdk.logout()
         _ = try await sdk.silentLogin()
 
-        let logoutBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/coins/deregister"])
+        let logoutBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/deregister"])
         XCTAssertEqual(logoutBody["uid"] as? String, "u-retained")
         let loginBody = try XCTUnwrap(MockURLProtocol.requestBodies["/m/v7/user/login"])
         XCTAssertEqual(loginBody["uid"] as? String, "u-retained")
@@ -200,7 +204,7 @@ final class NexusCoreUserTests: XCTestCase {
         MockURLProtocol.responses = [
             "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"u-logout-error"}}"#,
             "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"u-logout-error","email":"","phone":"","email_bound":false,"phone_bound":false,"balance":0}}"#,
-            "/m/v7/coins/deregister": #"{"code":0,"message":"logout denied","data":{}}"#
+            "/m/v7/deregister": #"{"code":0,"message":"logout denied","data":{}}"#
         ]
         MockURLProtocol.requestBodies = [:]
         let session = URLSession(configuration: .mock)
@@ -305,6 +309,50 @@ final class NexusCoreUserTests: XCTestCase {
         } catch {
             XCTAssertEqual(error.localizedDescription, "cost must be greater than 0")
         }
+    }
+
+    func testWeeklyPointsInfoAndClaimUseDedicatedEndpoints() async throws {
+        MockURLProtocol.responses = [
+            "/m/v7/user/login": #"{"code":1,"message":"success","data":{"uid":"weekly-user"}}"#,
+            "/m/v7/user/info": #"{"code":1,"message":"success","data":{"uid":"weekly-user","balance":10,"is_vip":true}}"#,
+            "/m/weekly_points/info": #"{"code":1,"message":"success","data":{"is_vip":true,"market_product_id":"subscription.monthly","weekly_points":30,"can_claim":true,"cannot_claim_reason":""}}"#,
+            "/m/weekly_points/claim": #"{"code":1,"message":"success","data":{"success":true,"points":30,"transaction_id":"101","claim_time":"2026-08-26T09:30:00Z"}}"#
+        ]
+        MockURLProtocol.requestBodies = [:]
+        let sdk = NexusCoreUser.shared
+        sdk.initialize(
+            config: try CoreUserConfig(
+                productId: "weekly-points-test",
+                productName: "demo",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: URLSession(configuration: .mock)
+        )
+        try sdk.clearLocalSession()
+        _ = try await sdk.silentLogin()
+
+        let info = try await sdk.getWeeklyPointsInfo()
+        let claim = try await sdk.claimWeeklyPoints(marketProductId: "subscription.monthly")
+
+        XCTAssertTrue(info.isVip)
+        XCTAssertEqual(info.marketProductId, "subscription.monthly")
+        XCTAssertEqual(info.weeklyPoints, 30)
+        XCTAssertTrue(info.canClaim)
+        XCTAssertTrue(claim.success)
+        XCTAssertEqual(claim.points, 30)
+        XCTAssertEqual(claim.transactionId, "101")
+        XCTAssertEqual(MockURLProtocol.requestBodies["/m/weekly_points/info"]?["uid"] as? String, "weekly-user")
+        XCTAssertEqual(MockURLProtocol.requestBodies["/m/weekly_points/claim"]?["uid"] as? String, "weekly-user")
+        XCTAssertEqual(MockURLProtocol.requestBodies["/m/weekly_points/claim"]?["market_product_id"] as? String, "subscription.monthly")
+    }
+
+    func testSDKUserDecodesLegacyCacheWithoutVipFields() throws {
+        let data = Data(#"{"uid":"legacy","deviceId":"device","balance":12,"userInfoSynced":true}"#.utf8)
+        let user = try JSONDecoder().decode(SDKUser.self, from: data)
+
+        XCTAssertFalse(user.isVip)
+        XCTAssertEqual(user.vipExpiredAt, 0)
     }
 }
 

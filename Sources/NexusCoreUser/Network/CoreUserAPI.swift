@@ -56,9 +56,21 @@ final class CoreUserAPI: @unchecked Sendable {
         guard let uid = JSONObject.string(root, keys: "uid") ?? JSONObject.string(data, keys: "uid") else {
             throw CoreUserError.invalidResponse("Login response missing uid")
         }
-        let configObject = data.isEmpty ? root : data
-        let loginConfig = configObject.filter { !["uid", "code", "message", "data"].contains($0.key) }
-        return (uid, loginConfig)
+        return (uid, [:])
+    }
+
+    func getSwitchConfig(att: Int, uid: String?) async throws -> String {
+        let values: [String: Any?] = [
+            "version": config.version,
+            "language": config.language,
+            "country": config.country,
+            "st": timestamp(),
+            "is_has_sim": false,
+            "att": att,
+            "level": 1,
+            "uid": uid ?? ""
+        ]
+        return try await post(path: "/", values: values, encrypt: false)
     }
 
     func getUserInfo(uid: String, deviceId: String) async throws -> SDKUser {
@@ -76,7 +88,44 @@ final class CoreUserAPI: @unchecked Sendable {
             emailBound: JSONObject.bool(data, key: "email_bound"),
             phoneBound: JSONObject.bool(data, key: "phone_bound"),
             balance: (JSONObject.double(data, key: "balance") ?? 0) * Self.userBalanceDisplayScale,
+            isVip: JSONObject.bool(data, key: "is_vip"),
+            vipExpiredAt: Int64(JSONObject.double(data, key: "vip_expired_at") ?? 0),
             userInfoSynced: true
+        )
+    }
+
+    func getWeeklyPointsInfo(uid: String) async throws -> WeeklyPointsInfo {
+        let response = try await post(path: "/m/weekly_points/info", values: ["uid": uid])
+        let root = try JSONObject.decodeObject(response)
+        if let code = JSONObject.int(root, key: "code"), code != 1 {
+            throw CoreUserError.apiError(JSONObject.string(root, keys: "message") ?? "Get weekly points info failed")
+        }
+        let data = root["data"] as? [String: Any] ?? root
+        return WeeklyPointsInfo(
+            isVip: JSONObject.bool(data, key: "is_vip"),
+            marketProductId: JSONObject.string(data, keys: "market_product_id") ?? "",
+            weeklyPoints: JSONObject.int(data, key: "weekly_points") ?? 0,
+            canClaim: JSONObject.bool(data, key: "can_claim"),
+            cannotClaimReason: JSONObject.string(data, keys: "cannot_claim_reason") ?? ""
+        )
+    }
+
+    func claimWeeklyPoints(uid: String, marketProductId: String?) async throws -> WeeklyPointsClaimResult {
+        var values: [String: Any?] = ["uid": uid]
+        if let productId = marketProductId?.trimmingCharacters(in: .whitespacesAndNewlines), !productId.isEmpty {
+            values["market_product_id"] = productId
+        }
+        let response = try await post(path: "/m/weekly_points/claim", values: values)
+        let root = try JSONObject.decodeObject(response)
+        if let code = JSONObject.int(root, key: "code"), code != 1 {
+            throw CoreUserError.apiError(JSONObject.string(root, keys: "message") ?? "Claim weekly points failed")
+        }
+        let data = root["data"] as? [String: Any] ?? root
+        return WeeklyPointsClaimResult(
+            success: JSONObject.bool(data, key: "success"),
+            points: JSONObject.int(data, key: "points") ?? 0,
+            transactionId: JSONObject.string(data, keys: "transaction_id") ?? "",
+            claimTime: JSONObject.string(data, keys: "claim_time") ?? ""
         )
     }
 
@@ -168,7 +217,7 @@ final class CoreUserAPI: @unchecked Sendable {
     }
 
     func logout(uid: String) async throws {
-        let response = try await post(path: "/m/v7/coins/deregister", values: ["uid": uid])
+        let response = try await post(path: "/m/v7/deregister", values: ["uid": uid])
         let root = try JSONObject.decodeObject(response)
         if let code = JSONObject.int(root, key: "code"), code != 1 {
             throw CoreUserError.apiError(JSONObject.string(root, keys: "message") ?? "Logout failed")

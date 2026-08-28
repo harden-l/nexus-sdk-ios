@@ -39,16 +39,16 @@ final class CoreUserStorage: @unchecked Sendable {
         saveUser(retainedUser)
     }
 
-    func saveLoginConfig(_ values: [String: Any?]) {
-        defaults.set(JSONObject.clean(values), forKey: prefix + "login_config")
+    func saveSwitchConfig(_ value: String) {
+        defaults.set(value, forKey: prefix + "switch_config")
     }
 
-    func getLoginConfig() -> [String: Any] {
-        defaults.dictionary(forKey: prefix + "login_config") ?? [:]
+    func getSwitchConfig() -> String? {
+        defaults.string(forKey: prefix + "switch_config")
     }
 
-    func clearLoginConfig() {
-        defaults.removeObject(forKey: prefix + "login_config")
+    func clearSwitchConfig() {
+        defaults.removeObject(forKey: prefix + "switch_config")
     }
 
     func setLoginAttributionEnabled(_ enabled: Bool) {

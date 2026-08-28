@@ -24,7 +24,9 @@ enum ProductDetailsMerger {
                 trialPeriod: storeProduct.trialPeriod ?? apiProduct.trialPeriod,
                 hasTrial: apiProduct.hasTrial || storeProduct.hasTrial,
                 entitlementId: apiProduct.entitlementId,
-                benefits: apiProduct.benefits
+                benefits: apiProduct.benefits,
+                weeklyPointsEnabled: apiProduct.weeklyPointsEnabled,
+                weeklyPoints: apiProduct.weeklyPoints
             )
         }
     }

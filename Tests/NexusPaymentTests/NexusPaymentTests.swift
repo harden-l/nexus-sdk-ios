@@ -63,13 +63,15 @@ final class NexusPaymentTests: XCTestCase {
     }
 
     func testProductParserReadsApiList() throws {
-        let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","description":"Pro","product_type":2,"coins_granted":100.25,"price":"9.99","currency":"USD","benefits":["A","B"]}]}}"#
+        let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","description":"Pro","product_type":2,"coins_granted":100.25,"price":"9.99","currency":"USD","benefits":["A","B"],"weekly_points_enabled":1,"weekly_points":30}]}}"#
         let products = try ProductParser.parse(body)
 
         XCTAssertEqual(products.first?.marketProductId, "vip_month")
         XCTAssertEqual(products.first?.productType, .subscription)
         XCTAssertEqual(products.first?.coinsGranted, 100.25)
         XCTAssertEqual(products.first?.benefits, ["A", "B"])
+        XCTAssertTrue(products.first?.weeklyPointsEnabled == true)
+        XCTAssertEqual(products.first?.weeklyPoints, 30)
     }
 
     func testProductParserTreatsCoinProductAsConsumable() throws {
@@ -85,7 +87,7 @@ final class NexusPaymentTests: XCTestCase {
         configuration.protocolClasses = [ProductURLProtocol.self]
         let session = URLSession(configuration: configuration)
         ProductURLProtocol.requestHandler = { request in
-            XCTAssertEqual(request.url?.path, "/m/v6/iap/list")
+            XCTAssertEqual(request.url?.path, "/m/v7/iap/list")
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Encrypt"), "0")
             let body = #"{"code":1,"data":{"list":[{"market_product_id":"vip_month","name":"VIP Monthly","product_type":2,"coins_granted":100.25}]}}"#
@@ -114,7 +116,7 @@ final class NexusPaymentTests: XCTestCase {
 
     func testProductDetailsMergerKeepsUnmatchedAPIProducts() {
         let apiProducts = [
-            Product(marketProductId: "monthly", name: "Monthly API", description: "API benefits", productType: .subscription, coinsGranted: 20),
+            Product(marketProductId: "monthly", name: "Monthly API", description: "API benefits", productType: .subscription, coinsGranted: 20, weeklyPointsEnabled: true, weeklyPoints: 30),
             Product(marketProductId: "coins", name: "Coins API", productType: .consumable, coinsGranted: 50, price: "1.99")
         ]
         let storeProducts = [
@@ -128,6 +130,8 @@ final class NexusPaymentTests: XCTestCase {
         XCTAssertEqual(merged[0].description, "API benefits")
         XCTAssertEqual(merged[0].coinsGranted, 20)
         XCTAssertEqual(merged[0].localizedPrice, "$9.99")
+        XCTAssertTrue(merged[0].weeklyPointsEnabled)
+        XCTAssertEqual(merged[0].weeklyPoints, 30)
         XCTAssertEqual(merged[1], apiProducts[1])
     }
 
@@ -235,6 +239,53 @@ final class NexusPaymentTests: XCTestCase {
         XCTAssertEqual(sdk.deliveryId(for: first), "101")
         XCTAssertEqual(sdk.deliveryId(for: renewal), "102")
         XCTAssertNotEqual(sdk.deliveryId(for: first), sdk.deliveryId(for: renewal))
+    }
+
+    func testClaimWeeklyPointsRefreshesCachedUserBalance() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ProductURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        var userInfoCalls = 0
+        ProductURLProtocol.requestHandler = { request in
+            let path = request.url?.path ?? ""
+            let body: String
+            switch path {
+            case "/m/v7/user/login":
+                body = #"{"code":1,"data":{"uid":"weekly-payment-user"}}"#
+            case "/m/v7/user/info":
+                userInfoCalls += 1
+                body = #"{"code":1,"data":{"uid":"weekly-payment-user","balance":\#(userInfoCalls == 1 ? 10 : 40),"is_vip":true}}"#
+            case "/m/weekly_points/claim":
+                body = #"{"code":1,"data":{"success":true,"points":30,"transaction_id":"tx-1","claim_time":"2026-08-26T09:30:00Z"}}"#
+            default:
+                XCTFail("Unexpected request path: \(path)")
+                body = #"{"code":0,"message":"unexpected"}"#
+            }
+            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(body.utf8))
+        }
+        defer { ProductURLProtocol.requestHandler = nil }
+
+        let core = NexusCoreUser.shared
+        core.initialize(
+            config: try CoreUserConfig(
+                productId: "weekly-payment-test",
+                productName: "demo",
+                apiBaseUrl: "https://unit.test",
+                encrypt: false
+            ),
+            session: session
+        )
+        try core.clearLocalSession()
+        _ = try await core.silentLogin()
+        let payment = NexusPayment.shared
+        payment.initialize(config: try PaymentConfig(productId: "weekly-payment-test"))
+
+        let result = try await payment.claimWeeklyPoints(marketProductId: "subscription.monthly")
+
+        XCTAssertTrue(result.success)
+        XCTAssertEqual(userInfoCalls, 2)
+        XCTAssertEqual(try core.getCurrentUser()?.balance, 4_000)
     }
 }
 

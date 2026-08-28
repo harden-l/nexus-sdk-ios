@@ -7,7 +7,7 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.8"
+    public static let version = "0.0.11"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]
@@ -189,6 +189,37 @@ public final class NexusPayment: @unchecked Sendable {
             return Array(loadEntitlementState(uid: uid).entitlements.values)
         } catch {
             return []
+        }
+    }
+
+    public func getWeeklyPointsInfo() async throws -> WeeklyPointsInfo {
+        try await NexusCoreUser.shared.getWeeklyPointsInfo()
+    }
+
+    public func getWeeklyPointsInfo(
+        completion: @escaping @Sendable (CoreUserResult<WeeklyPointsInfo>) -> Void
+    ) {
+        Task {
+            do { completion(.success(try await getWeeklyPointsInfo())) }
+            catch { completion(.failure(error)) }
+        }
+    }
+
+    public func claimWeeklyPoints(marketProductId: String? = nil) async throws -> WeeklyPointsClaimResult {
+        let result = try await NexusCoreUser.shared.claimWeeklyPoints(marketProductId: marketProductId)
+        if result.success {
+            _ = try? await NexusCoreUser.shared.fetchUserInfo()
+        }
+        return result
+    }
+
+    public func claimWeeklyPoints(
+        marketProductId: String? = nil,
+        completion: @escaping @Sendable (CoreUserResult<WeeklyPointsClaimResult>) -> Void
+    ) {
+        Task {
+            do { completion(.success(try await claimWeeklyPoints(marketProductId: marketProductId))) }
+            catch { completion(.failure(error)) }
         }
     }
 
@@ -525,7 +556,7 @@ final class ProductAPI: @unchecked Sendable {
     }
 
     func getProducts() async throws -> [Product] {
-        guard let url = URL(string: config.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/m/v6/iap/list") else {
+        guard let url = URL(string: config.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/m/v7/iap/list") else {
             throw PaymentError.invalidConfig("Invalid apiBaseUrl")
         }
         var request = URLRequest(url: url)
@@ -567,7 +598,9 @@ enum ProductParser {
                 trialPeriod: string(item["trial_period"]),
                 hasTrial: bool(item["has_trial"]),
                 entitlementId: string(item["entitlement_id"]),
-                benefits: item["benefits"] as? [String] ?? []
+                benefits: item["benefits"] as? [String] ?? [],
+                weeklyPointsEnabled: int(item["weekly_points_enabled"]) == 1,
+                weeklyPoints: int(item["weekly_points"]) ?? 0
             )
         }
     }

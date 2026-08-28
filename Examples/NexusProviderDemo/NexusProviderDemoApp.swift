@@ -275,7 +275,6 @@ final class NexusProviderDemoViewController: UIViewController {
                 await MainActor.run {
                     NexusGrowthAnalyticsAd.shared.setUser(loggedInUser)
                     append("Full flow login success: \(format(user: loggedInUser))")
-                    append("Full flow login config: \((try? NexusCoreUser.shared.getConfig()) ?? [:])")
                 }
 
                 let refreshedUser = try await NexusCoreUser.shared.fetchUserInfo()
@@ -479,7 +478,6 @@ final class NexusProviderDemoViewController: UIViewController {
 
     @objc private func getLoginConfigTapped() {
         do {
-            append("Login config: \(try NexusCoreUser.shared.getConfig())")
         } catch {
             append("Get login config failed: \(error.localizedDescription)")
         }

@@ -107,8 +107,10 @@ public struct Product: Equatable, Codable, Sendable {
     public var hasTrial: Bool
     public var entitlementId: String?
     public var benefits: [String]
+    public var weeklyPointsEnabled: Bool
+    public var weeklyPoints: Int
 
-    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Double? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = []) {
+    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Double? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = [], weeklyPointsEnabled: Bool = false, weeklyPoints: Int = 0) {
         self.marketProductId = marketProductId
         self.name = name
         self.description = description
@@ -122,6 +124,8 @@ public struct Product: Equatable, Codable, Sendable {
         self.hasTrial = hasTrial
         self.entitlementId = entitlementId
         self.benefits = benefits
+        self.weeklyPointsEnabled = weeklyPointsEnabled
+        self.weeklyPoints = weeklyPoints
     }
 }
 
