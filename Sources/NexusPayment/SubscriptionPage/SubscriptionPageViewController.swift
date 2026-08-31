@@ -477,6 +477,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             .max() ?? 0
         guard configuredPoints > 0 || info.weeklyPoints > 0 else { return }
         let points = max(configuredPoints, info.weeklyPoints)
+        let displayedPoints = points * 100
 
         let iconName = theme.id == .midnight ? "gift.fill" : "calendar.badge.clock"
         let icon = UIImageView(image: UIImage(systemName: iconName))
@@ -491,13 +492,13 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
         let detail: String
         if info.canClaim {
-            detail = "\(points) points ready to claim"
+            detail = "\(displayedPoints) points ready to claim"
         } else if info.cannotClaimReason == "already_claimed" {
             detail = "Claimed for this week"
         } else if info.cannotClaimReason == "no_valid_subscription" {
-            detail = "Subscribe to earn \(points) points weekly"
+            detail = "Subscribe to earn \(displayedPoints) points weekly"
         } else {
-            detail = "\(points) points per week"
+            detail = "\(displayedPoints) points per week"
         }
         let copy = UIStackView(arrangedSubviews: [
             textLabel("Weekly points", size: 16, color: theme.title, weight: .bold),
@@ -1339,7 +1340,7 @@ private final class ProductOptionCard: UIControl {
         if !metadata.isEmpty { column.addArrangedSubview(label(metadata, size: 12, color: theme.muted, lines: 2)) }
         column.addArrangedSubview(label(productValueLine(product), size: 12, color: theme.muted, weight: .semibold, lines: 2))
         if product.productType == .subscription, product.weeklyPointsEnabled, product.weeklyPoints > 0 {
-            column.addArrangedSubview(label("\(product.weeklyPoints) points every week", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
+            column.addArrangedSubview(label("\(product.weeklyPoints * 100) points every week", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
         } else if let coins = product.coinsGranted, coins > 0 {
             column.addArrangedSubview(label("Get \(CoinAmountFormatter.displayText(coins)) credits after purchase", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
         }

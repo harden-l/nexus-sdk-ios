@@ -2,7 +2,7 @@
 
 This directory contains the Swift Package implementation of the Nexus SDK.
 
-Current release: `0.0.11`
+Current release: `0.0.12`
 
 Current status:
 
