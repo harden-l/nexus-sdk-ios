@@ -196,7 +196,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         copy.axis = .vertical
         copy.spacing = 9
         copy.addArrangedSubview(textLabel(templateEyebrow(), size: 12, color: theme.accent, weight: .bold))
-        copy.addArrangedSubview(textLabel(pageConfig.title, size: 27, color: theme.title, weight: .bold, maxLines: 2))
+        copy.addArrangedSubview(textLabel(pageConfig.title, size: 27, color: theme.title, weight: .bold, maxLines: 3))
         copy.addArrangedSubview(textLabel(templateSubhead(), size: 14, color: theme.muted, maxLines: 3))
         row.addArrangedSubview(copy)
 
@@ -228,7 +228,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         rule.widthAnchor.constraint(equalToConstant: 54).isActive = true
         rule.heightAnchor.constraint(equalToConstant: 3).isActive = true
         content.addArrangedSubview(rule)
-        content.addArrangedSubview(textLabel(pageConfig.title, size: 30, color: theme.title, weight: .bold, maxLines: 2))
+        content.addArrangedSubview(textLabel(pageConfig.title, size: 30, color: theme.title, weight: .bold, maxLines: 3))
         content.addArrangedSubview(textLabel(templateSubhead(), size: 14, color: theme.muted, maxLines: 3))
         return inset(content, UIEdgeInsets(top: 12, left: 2, bottom: 8, right: 2))
     }
@@ -338,8 +338,8 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         }
 
         if pageConfig.showPaymentChannel { addPaymentChannels() }
-        addBottomActions()
         buildStickyAction()
+        addBottomActions()
         view.layoutIfNeeded()
         if preserveScrollPosition {
             let maximumY = max(0, scrollView.contentSize.height - scrollView.bounds.height)
@@ -916,29 +916,46 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
     private func addBottomActions() {
         guard pageConfig.showRestore || pageConfig.showTerms || pageConfig.showPrivacy else { return }
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 10
+        let footer = UIStackView()
+        footer.axis = .horizontal
+        footer.alignment = .center
+        footer.spacing = 2
         if pageConfig.showRestore {
             let restore = linkButton(pageConfig.restoreText)
+            restore.contentHorizontalAlignment = .left
             restore.addAction(UIAction { [weak self] _ in self?.restoreTapped() }, for: .touchUpInside)
-            row.addArrangedSubview(restore)
+            footer.addArrangedSubview(restore)
+            restore.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
-        let spacer = UIView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        row.addArrangedSubview(spacer)
+        let legal = UIStackView()
+        legal.axis = .horizontal
+        legal.alignment = .center
+        legal.distribution = .fill
+        legal.spacing = 2
+        var hasLegalLink = false
         if pageConfig.showTerms {
             let terms = linkButton(pageConfig.termsText)
             terms.addAction(UIAction { [weak self] _ in self?.openUrl(self?.pageConfig.termsUrl) }, for: .touchUpInside)
-            row.addArrangedSubview(terms)
+            legal.addArrangedSubview(terms)
+            hasLegalLink = true
         }
         if pageConfig.showPrivacy {
+            if hasLegalLink {
+                let separator = UILabel()
+                separator.text = "·"
+                separator.textColor = theme.muted
+                separator.font = .systemFont(ofSize: 13)
+                legal.addArrangedSubview(separator)
+            }
             let privacy = linkButton(pageConfig.privacyText)
             privacy.addAction(UIAction { [weak self] _ in self?.openUrl(self?.pageConfig.privacyUrl) }, for: .touchUpInside)
-            row.addArrangedSubview(privacy)
+            legal.addArrangedSubview(privacy)
         }
-        contentStack.addArrangedSubview(row)
+        if !legal.arrangedSubviews.isEmpty {
+            legal.setContentHuggingPriority(.required, for: .horizontal)
+            footer.addArrangedSubview(legal)
+        }
+        actionHost.addArrangedSubview(footer)
     }
 
     private func linkButton(_ title: String) -> UIButton {
@@ -946,7 +963,12 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         button.setTitle(title, for: .normal)
         button.tintColor = theme.id == .midnight ? theme.primary : theme.muted
         button.titleLabel?.font = .systemFont(ofSize: 13)
-        button.titleLabel?.numberOfLines = 0
+        button.titleLabel?.numberOfLines = 2
+        button.titleLabel?.textAlignment = .center
+        button.titleLabel?.lineBreakMode = .byWordWrapping
+        button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.85
         return button
     }
 
@@ -1265,11 +1287,11 @@ private final class ProductOptionCard: UIControl {
         switch theme.id {
         case .aurora:
             icon.layer.cornerRadius = 16
-            NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 76), icon.heightAnchor.constraint(equalToConstant: 76)])
-            let row = UIStackView(arrangedSubviews: [radio, productCopy(product, layout: .feature), icon])
+            NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 66), icon.heightAnchor.constraint(equalToConstant: 66)])
+            let row = UIStackView(arrangedSubviews: [icon, productCopy(product, layout: .feature)])
             row.axis = .horizontal
-            row.alignment = .center
-            row.spacing = 12
+            row.alignment = .top
+            row.spacing = 14
             content = row
         case .midnight:
             icon.layer.cornerRadius = 22
@@ -1307,32 +1329,31 @@ private final class ProductOptionCard: UIControl {
         let column = UIStackView()
         column.axis = .vertical
         column.spacing = layout == .compact ? 4 : 6
-        let title = label(displayName(product), size: layout == .offer ? 20 : 17, color: theme.title, weight: .bold, lines: 2)
+        let title = label(displayName(product), size: layout == .offer ? 20 : 17, color: theme.title, weight: .bold, lines: 3)
         let price = label(product.localizedPrice ?? product.price ?? "", size: layout == .offer ? 17 : 16, color: layout == .offer ? theme.primary : theme.title, weight: .bold, lines: 1)
-        price.setContentHuggingPriority(.required, for: .horizontal)
+        price.adjustsFontSizeToFitWidth = true
+        price.minimumScaleFactor = 0.75
+        price.allowsDefaultTighteningForTruncation = true
+        price.setContentCompressionResistancePriority(.required, for: .vertical)
         let badge = badgeLabel(badgeText(product))
 
         if layout == .offer {
-            let top = UIStackView(arrangedSubviews: [badge, UIView(), price])
-            top.axis = .horizontal
-            top.alignment = .center
-            top.spacing = 8
-            column.addArrangedSubview(top)
+            column.addArrangedSubview(badge)
             column.addArrangedSubview(title)
+            column.addArrangedSubview(price)
+        } else if layout == .feature {
+            column.addArrangedSubview(title)
+            column.addArrangedSubview(price)
+            column.addArrangedSubview(badge)
         } else {
-            let top = UIStackView(arrangedSubviews: [title, price])
-            top.axis = .horizontal
-            top.alignment = .top
-            top.spacing = 8
-            column.addArrangedSubview(top)
-            if layout == .feature { column.addArrangedSubview(badge) }
+            column.addArrangedSubview(title)
+            column.addArrangedSubview(price)
+            column.addArrangedSubview(badge)
         }
 
         if !product.description.isEmpty {
             column.addArrangedSubview(label(product.description, size: layout == .compact ? 12 : 13, color: theme.muted, lines: layout == .feature ? 3 : 2))
         }
-        if layout == .compact { column.addArrangedSubview(badge) }
-
         let metadata = [
             product.subscriptionPeriod.map { "Renews \($0)" },
             product.trialPeriod.map { "Trial \($0)" }
@@ -1342,7 +1363,11 @@ private final class ProductOptionCard: UIControl {
         if product.productType == .subscription, product.weeklyPointsEnabled, product.weeklyPoints > 0 {
             column.addArrangedSubview(label("\(product.weeklyPoints * 100) points every week", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
         } else if let coins = product.coinsGranted, coins > 0 {
-            column.addArrangedSubview(label("Get \(CoinAmountFormatter.displayText(coins)) credits after purchase", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
+            let coinValue = label("Get \(CoinAmountFormatter.displayText(coins)) credits after purchase", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 3)
+            coinValue.adjustsFontSizeToFitWidth = true
+            coinValue.minimumScaleFactor = 0.78
+            coinValue.allowsDefaultTighteningForTruncation = true
+            column.addArrangedSubview(coinValue)
         }
         return column
     }
