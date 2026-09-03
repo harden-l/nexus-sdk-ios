@@ -82,10 +82,23 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         actionHost.layoutMargins = UIEdgeInsets(top: 9, left: 18, bottom: 11, right: 18)
         actionHost.isLayoutMarginsRelativeArrangement = true
         actionHost.backgroundColor = theme.id == .midnight ? theme.elevatedSurface : theme.surface
-        actionHost.layer.borderWidth = 1
+        actionHost.layer.borderWidth = theme.id == .midnight ? 0 : 1
         actionHost.layer.borderColor = theme.border.cgColor
         actionHost.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(actionHost)
+
+        if theme.id == .midnight {
+            let topBorder = UIView()
+            topBorder.backgroundColor = theme.border
+            topBorder.translatesAutoresizingMaskIntoConstraints = false
+            actionHost.addSubview(topBorder)
+            NSLayoutConstraint.activate([
+                topBorder.topAnchor.constraint(equalTo: actionHost.topAnchor),
+                topBorder.leadingAnchor.constraint(equalTo: actionHost.leadingAnchor),
+                topBorder.trailingAnchor.constraint(equalTo: actionHost.trailingAnchor),
+                topBorder.heightAnchor.constraint(equalToConstant: 1)
+            ])
+        }
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
@@ -901,6 +914,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         cta.heightAnchor.constraint(equalToConstant: 54).isActive = true
         cta.addAction(UIAction { [weak self] _ in self?.purchaseTapped() }, for: .touchUpInside)
         actionHost.addArrangedSubview(cta)
+        actionHost.setCustomSpacing(14, after: cta)
     }
 
     private func updateActionSummary() {
@@ -944,7 +958,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
                 let separator = UILabel()
                 separator.text = "·"
                 separator.textColor = theme.muted
-                separator.font = .systemFont(ofSize: 13)
+                separator.font = .systemFont(ofSize: 12)
                 legal.addArrangedSubview(separator)
             }
             let privacy = linkButton(pageConfig.privacyText)
@@ -962,7 +976,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         let button = UIButton(type: .system)
         button.setTitle(title, for: .normal)
         button.tintColor = theme.id == .midnight ? theme.primary : theme.muted
-        button.titleLabel?.font = .systemFont(ofSize: 13)
+        button.titleLabel?.font = .systemFont(ofSize: 12)
         button.titleLabel?.numberOfLines = 2
         button.titleLabel?.textAlignment = .center
         button.titleLabel?.lineBreakMode = .byWordWrapping

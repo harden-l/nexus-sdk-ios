@@ -37,7 +37,7 @@ public struct SubscriptionPageConfig: Equatable, Sendable {
         termsUrl: String = SubscriptionPageConfig.defaultTermsUrl,
         privacyUrl: String = SubscriptionPageConfig.defaultPrivacyUrl,
         ctaText: String = "Start Pro",
-        restoreText: String = "Restore Purchase",
+        restoreText: String = "Restore",
         termsText: String = "Terms",
         privacyText: String = "Privacy"
     ) throws {

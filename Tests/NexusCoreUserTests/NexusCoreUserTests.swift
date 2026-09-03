@@ -4,7 +4,7 @@ import XCTest
 final class NexusCoreUserTests: XCTestCase {
     func testVersionAndConfigDefaults() throws {
         let config = try CoreUserConfig(productId: "7", productName: "demo", apiBaseUrl: "https://example.com", encrypt: false)
-        XCTAssertEqual(NexusCoreUser.version, "0.0.13")
+        XCTAssertEqual(NexusCoreUser.version, "0.0.14")
         XCTAssertEqual(config.version.isEmpty, false)
         XCTAssertEqual(config.country.isEmpty, false)
         XCTAssertEqual(config.language.isEmpty, false)

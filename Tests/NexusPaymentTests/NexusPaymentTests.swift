@@ -18,6 +18,9 @@ final class NexusPaymentTests: XCTestCase {
         XCTAssertTrue(config.showPrivacy)
         XCTAssertEqual(config.termsUrl, SubscriptionPageConfig.defaultTermsUrl)
         XCTAssertEqual(config.privacyUrl, SubscriptionPageConfig.defaultPrivacyUrl)
+        XCTAssertEqual(config.restoreText, "Restore")
+        XCTAssertEqual(config.termsText, "Terms")
+        XCTAssertEqual(config.privacyText, "Privacy")
 
         XCTAssertThrowsError(try SubscriptionPageConfig(showTerms: true, termsUrl: ""))
         XCTAssertThrowsError(try SubscriptionPageConfig(showPrivacy: true, privacyUrl: ""))
