@@ -459,7 +459,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
         let balance = UIStackView(arrangedSubviews: [
             textLabel("Balance", size: 12, color: theme.muted, alignment: .right),
-            textLabel(Self.balanceText(user.balance), size: 18, color: theme.primary, weight: .bold, alignment: .right)
+            textLabel(CoinAmountFormatter.displayUnitText(user.balance), size: 18, color: theme.primary, weight: .bold, alignment: .right)
         ])
         balance.axis = .vertical
         balance.spacing = 2
@@ -476,10 +476,6 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             padding: UIEdgeInsets(top: 14, left: 15, bottom: 14, right: 15),
             border: user.isVip ? theme.primary : theme.border
         ))
-    }
-
-    private static func balanceText(_ value: Double) -> String {
-        value.rounded() == value ? String(Int64(value)) : String(format: "%.2f", value)
     }
 
     private func addWeeklyPointsSection() {

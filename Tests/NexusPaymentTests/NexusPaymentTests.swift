@@ -10,6 +10,11 @@ final class NexusPaymentTests: XCTestCase {
         XCTAssertEqual(CoinAmountFormatter.displayText(0.125), "12.5")
     }
 
+    func testUserBalanceDoesNotApplySubscriptionDisplayScaleAgain() {
+        XCTAssertEqual(CoinAmountFormatter.displayUnitText(2000), "2000")
+        XCTAssertEqual(CoinAmountFormatter.displayUnitText(2025.5), "2025.5")
+    }
+
     func testSubscriptionPageLegalLinkDefaultsAndValidation() throws {
         let config = try SubscriptionPageConfig()
         XCTAssertEqual(config.templateId, SubscriptionPageTemplateId.aurora.rawValue)

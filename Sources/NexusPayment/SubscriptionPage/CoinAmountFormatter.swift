@@ -7,4 +7,9 @@ enum CoinAmountFormatter {
         let amount = Decimal(string: String(value)) ?? Decimal(value)
         return NSDecimalNumber(decimal: amount * displayScale).stringValue
     }
+
+    static func displayUnitText(_ value: Double) -> String {
+        let amount = Decimal(string: String(value)) ?? Decimal(value)
+        return NSDecimalNumber(decimal: amount).stringValue
+    }
 }
