@@ -26,27 +26,35 @@ public final class FirebaseAnalyticsProvider: AnalyticsProvider, UserIdentityAna
 
     public func track(_ event: AnalyticsEvent) {
         guard event.eventName == Self.adRevenueEventName else { return }
-        Analytics.logEvent(Self.adImpressionEventName, parameters: firebaseParameters(event.params))
+        Analytics.logEvent(Self.adImpressionEventName, parameters: [
+            "ad_source": firstString(event.params, keys: "network_name", "ad_platform"),
+            "ad_platform": stringValue(event.params["ad_platform"]?.value),
+            "ad_format": stringValue(event.params["ad_format"]?.value),
+            "ad_unit_name": stringValue(event.params["ad_unit_id"]?.value),
+            "currency": stringValue(event.params["currency"]?.value),
+            "value": doubleValue(event.params["revenue"]?.value) ?? 0
+        ])
     }
 
     public func flush() {}
 
-    private func firebaseParameters(_ params: [String: AnySendable]) -> [String: Any] {
-        params.reduce(into: [String: Any]()) { result, item in
-            let value = item.value.value
-            if let string = value as? String {
-                result[item.key] = string
-            } else if let number = value as? NSNumber {
-                result[item.key] = number
-            } else if let bool = value as? Bool {
-                result[item.key] = bool
-            } else if let int = value as? Int {
-                result[item.key] = int
-            } else if let double = value as? Double {
-                result[item.key] = double
-            } else {
-                result[item.key] = "\(value)"
-            }
+    private func firstString(_ params: [String: AnySendable], keys: String...) -> String {
+        for key in keys {
+            let value = stringValue(params[key]?.value)
+            if !value.isEmpty { return value }
         }
+        return ""
+    }
+
+    private func stringValue(_ value: Any?) -> String {
+        guard let value else { return "" }
+        return value as? String ?? "\(value)"
+    }
+
+    private func doubleValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let value = value as? Double { return value }
+        if let value = value as? String { return Double(value) }
+        return nil
     }
 }

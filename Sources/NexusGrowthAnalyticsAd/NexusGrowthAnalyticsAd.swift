@@ -6,7 +6,7 @@ import UIKit
 
 public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
     public static let shared = NexusGrowthAnalyticsAd()
-    public static let version = "0.0.15"
+    public static let version = "0.0.16"
 
     private var config: AnalyticsConfig?
     private var currentUser: SDKUser?
@@ -105,12 +105,14 @@ public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
             callbacks?.onFailed(placement, error: GrowthAnalyticsError.providerUnsupported("Frequency cap reached for \(placement.placement)"))
             return
         }
-        try track("ad_show", params: placement.eventParams())
         adProvider.showAd(
             placement,
             callbacks: ShownTrackingAdCallbacks(
                 downstream: callbacks,
-                onShown: { [weak self] in self?.frequencyController.recordShown(placement) }
+                onShown: { [weak self] in
+                    self?.frequencyController.recordShown(placement)
+                    _ = try? self?.track("ad_show", params: placement.eventParams())
+                }
             )
         )
     }
@@ -118,7 +120,16 @@ public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
     #if canImport(UIKit)
     public func loadBanner(_ placement: AdPlacement, container: UIView, callbacks: AdCallbacks? = nil) throws {
         try track("ad_load", params: placement.eventParams())
-        adProvider.loadBanner(placement, container: container, callbacks: callbacks)
+        adProvider.loadBanner(
+            placement,
+            container: container,
+            callbacks: ShownTrackingAdCallbacks(
+                downstream: callbacks,
+                onShown: { [weak self] in
+                    _ = try? self?.track("ad_show", params: placement.eventParams())
+                }
+            )
+        )
     }
 
     public func loadNative(_ placement: AdPlacement, callbacks: NativeAdCallbacks?) throws {
@@ -138,6 +149,7 @@ public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
             "ad_format": payload.adFormat.rawValue,
             "currency": payload.currency,
             "revenue": payload.revenue,
+            "ecpm": payload.revenue * 1_000,
             "country": payload.country,
             "network_name": payload.networkName,
             "network_firm_id": payload.networkFirmId,

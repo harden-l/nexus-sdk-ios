@@ -49,7 +49,14 @@ public final class AppsFlyerAnalyticsProvider: NSObject, AnalyticsProvider, User
 
     public func track(_ event: AnalyticsEvent) {
         guard event.eventName == Self.adRevenueEventName else { return }
-        AppsFlyerLib.shared().logEvent(Self.adImpressionEventName, withValues: appsFlyerValues(event.params))
+        AppsFlyerLib.shared().logEvent(Self.adImpressionEventName, withValues: [
+            AFEventParamCurrency: event.params["currency"]?.value ?? "",
+            AFEventParamRevenue: event.params["revenue"]?.value ?? 0,
+            "af_ad_revenue_ad_type": event.params["ad_format"]?.value ?? "",
+            "af_ad_revenue_placement_id": firstValue(event.params, keys: "placement", "ad_unit_id"),
+            "af_ad_revenue_network_name": firstValue(event.params, keys: "network_name", "ad_platform"),
+            "af_ad_revenue_mediated_network_name": event.params["mediation_platform"]?.value ?? ""
+        ])
     }
 
     public func flush() {}
@@ -66,10 +73,13 @@ public final class AppsFlyerAnalyticsProvider: NSObject, AnalyticsProvider, User
         AppsFlyerLib.shared().`continue`(userActivity, restorationHandler: restorationHandler)
     }
 
-    private func appsFlyerValues(_ params: [String: AnySendable]) -> [AnyHashable: Any] {
-        params.reduce(into: [AnyHashable: Any]()) { result, item in
-            result[item.key] = item.value.value
+    private func firstValue(_ params: [String: AnySendable], keys: String...) -> Any {
+        for key in keys {
+            if let value = params[key]?.value, !"\(value)".isEmpty {
+                return value
+            }
         }
+        return ""
     }
 
     private func saveAttribution(_ params: [String: Any?]) {

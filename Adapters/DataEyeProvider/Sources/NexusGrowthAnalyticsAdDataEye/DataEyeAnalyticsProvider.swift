@@ -96,7 +96,7 @@ public enum BIEventMapper {
     private static func adType(_ value: Any?) -> String {
         switch stringValue(value) {
         case "native": return "Native"
-        case "rewarded": return "RewardedVideo"
+        case "rewarded", "rewarded_interstitial": return "RewardedVideo"
         case "banner": return "Banner"
         case "interstitial": return "Interstitial"
         case "app_open": return "Splash"

@@ -7,7 +7,7 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.15"
+    public static let version = "0.0.16"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]

@@ -363,6 +363,9 @@ final class NexusProviderDemoViewController: UIViewController {
             rootViewControllerProvider: { [weak self] in self },
             revenueReporter: { payload in
                 _ = try? NexusGrowthAnalyticsAd.shared.reportAdRevenue(payload)
+            },
+            eventReporter: { eventName, params in
+                _ = try? NexusGrowthAnalyticsAd.shared.track(eventName, params: params)
             }
         )
         NexusGrowthAnalyticsAd.shared.initialize(

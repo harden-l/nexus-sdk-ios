@@ -2,7 +2,7 @@
 
 本文面向接入 Nexus SDK 的 iOS 业务 App。SDK 按模块提供能力，业务方可以根据需求只接入其中 1 个或多个模块。
 
-当前版本：`0.0.15`
+当前版本：`0.0.16`
 
 ## 1. 模块选择
 
@@ -52,19 +52,19 @@
 https://github.com/harden-l/nexus-sdk-ios.git
 ```
 
-推荐指定版本：`0.0.15`。
+推荐指定版本：`0.0.16`。
 
 Xcode 接入：
 
 1. `File` -> `Add Package Dependencies...`
 2. 输入 `https://github.com/harden-l/nexus-sdk-ios.git`
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.15`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.16`
 4. 按需勾选业务 App target 需要的 products
 
 Package.swift 接入：
 
 ```swift
-.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.15")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.16")
 ```
 
 按需添加 target product：
@@ -87,11 +87,11 @@ Package.swift 接入：
 | AdMob | `https://github.com/harden-l/nexus-sdk-ios-admob-provider.git` | `NexusGrowthAnalyticsAdAdMob` |
 | DataEye | `https://github.com/harden-l/nexus-sdk-ios-dataeye-provider.git` | `NexusGrowthAnalyticsAdDataEye` |
 
-Firebase、AppsFlyer、AdMob 独立 Provider 当前已发布版本为 `0.0.15`。DataEye Provider 仓库当前不可访问，暂未完成本次版本发布。在 Xcode 中添加可用 Provider 时：
+Firebase、AppsFlyer、AdMob 独立 Provider 当前已发布版本为 `0.0.16`。DataEye Provider 仓库当前不可访问，暂未完成本次版本发布。在 Xcode 中添加可用 Provider 时：
 
 1. 再次选择 `File` -> `Add Package Dependencies...`
 2. 输入上表对应的 Provider Package URL
-3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.15`
+3. Dependency Rule 选择 `Exact Version`，版本填 `0.0.16`
 4. 只勾选业务 App 实际使用的 Provider product
 
 例如只使用 AdMob，只需要添加主 SDK 的 `NexusGrowthAnalyticsAd` 和 AdMob 包的 `NexusGrowthAnalyticsAdAdMob`。不需要添加 Firebase 或 AppsFlyer Provider。
@@ -100,10 +100,10 @@ Firebase、AppsFlyer、AdMob 独立 Provider 当前已发布版本为 `0.0.15`�
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.15"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.15"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.15"),
-    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.15")
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.16"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.16"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.16"),
+    .package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.16")
 ]
 ```
 
@@ -124,7 +124,7 @@ Provider 按自身发布版本独立管理，与主 SDK 保持 API 兼容。主 
 
 - 每个 Provider 仓库只引入对应的官方 SDK，不会因为接入一个 Provider 而解析另外两个平台 SDK。
 - 业务 App 需要同时添加主 SDK product `NexusGrowthAnalyticsAd` 和实际使用的 Provider product。
-- 主 SDK 当前为 `0.0.15`；Firebase、AppsFlyer、AdMob Provider 当前为 `0.0.15`，按兼容关系独立升级。DataEye Provider 待仓库恢复后发布。
+- 主 SDK 当前为 `0.0.16`；Firebase、AppsFlyer、AdMob Provider 当前为 `0.0.16`，按兼容关系独立升级。DataEye Provider 待仓库恢复后发布。
 - DataEye Provider 位于独立仓库 `https://github.com/harden-l/nexus-sdk-ios-dataeye-provider.git`；DataEye 官方 iOS SDK 仍由业务 App 按 Provider 文档接入，再通过 `DataEyeBridge` 连接。
 
 ## 4. CoreUserSDK 接入
@@ -443,6 +443,9 @@ let adMob = AdMobAdProvider(
     rootViewControllerProvider: { rootViewController },
     revenueReporter: { payload in
         _ = try? NexusGrowthAnalyticsAd.shared.reportAdRevenue(payload)
+    },
+    eventReporter: { eventName, params in
+        _ = try? NexusGrowthAnalyticsAd.shared.track(eventName, params: params)
     }
 )
 
@@ -542,6 +545,8 @@ try NexusGrowthAnalyticsAd.shared.showAd(interstitial)
 全屏广告按 `format + adUnitId` 管理缓存。重复调用 `loadAd()` 时，如果已有缓存或正在加载，SDK 不会再次发起广告请求；并发传入的加载回调会在本次加载完成后统一返回。
 
 `showAd()` 会先检查缓存：有缓存时立即展示；无缓存时自动开始加载，本次通过 `onFailed` 返回广告未就绪，业务方可在后续时机再次调用 `showAd()`。开屏、插屏、激励和激励插屏广告展示成功或展示失败后，SDK 会自动预加载下一条。同一广告正在展示时不会重复展示。频控次数仅在收到实际展示回调后累计。
+
+`ad_show` 只在广告实际展示成功后上报：开屏、插屏、激励和激励插屏对应 AdMob 的 `adWillPresentFullScreenContent(_:)` 展示回调链路，Banner 和 Native 对应曝光回调。仅调用 `showAd()`、广告未就绪、加载失败或展示失败时不会上报 `ad_show`。
 
 ## 6. PaymentSDK 接入
 `PaymentSDK` 只负责支付与订阅能力。业务方不需要自行请求商品列表、拼装订阅页或手动处理订单校验；页面会根据配置自动完成商品加载、商店信息合并、购买、恢复和权益交付。

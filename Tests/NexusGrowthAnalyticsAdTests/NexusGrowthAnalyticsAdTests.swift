@@ -50,6 +50,27 @@ final class NexusGrowthAnalyticsAdTests: XCTestCase {
         XCTAssertNil(try sdk.reportPurchaseRevenue(payload))
     }
 
+    func testAdRevenueIncludesEcpm() throws {
+        let provider = MockAnalyticsProvider(name: "bi")
+        let sdk = NexusGrowthAnalyticsAd.shared
+        sdk.initialize(
+            config: try AnalyticsConfig(productId: "ad-revenue-test", enableFirebase: false, enableAppsflyer: false),
+            providers: [provider]
+        )
+        let payload = try AdRevenuePayload(
+            adPlatform: "admob",
+            adUnitId: "test-unit",
+            placement: "home",
+            adFormat: .interstitial,
+            currency: "USD",
+            revenue: 0.0123
+        )
+
+        let event = try sdk.reportAdRevenue(payload)
+
+        XCTAssertEqual(event.params["ecpm"]?.value as? Double, 12.3)
+    }
+
     func testShowWithoutCachePreloadsAndOnlyActualShowConsumesFrequency() throws {
         let sdk = NexusGrowthAnalyticsAd.shared
         sdk.initialize(
@@ -84,6 +105,27 @@ final class NexusGrowthAnalyticsAdTests: XCTestCase {
 
         XCTAssertEqual(callbacks.shownPlacements, ["screen_b"])
         XCTAssertEqual(callbacks.failureCount, 0)
+    }
+
+    func testAdShowIsTrackedOnlyAfterSuccessfulShowCallback() throws {
+        let analytics = MockAnalyticsProvider(name: "bi")
+        let sdk = NexusGrowthAnalyticsAd.shared
+        sdk.initialize(
+            config: try AnalyticsConfig(productId: "ad-show-test", enableFirebase: false, enableAppsflyer: false),
+            providers: [analytics],
+            adProvider: MockAdProvider()
+        )
+        let placement = try AdPlacement(
+            placement: "screen_a",
+            adUnitId: "shared-unit",
+            format: .interstitial
+        )
+
+        try sdk.showAd(placement)
+        XCTAssertFalse(analytics.events.contains { $0.eventName == "ad_show" })
+
+        try sdk.showAd(placement)
+        XCTAssertEqual(analytics.events.filter { $0.eventName == "ad_show" }.count, 1)
     }
 }
 

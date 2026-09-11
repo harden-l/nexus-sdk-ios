@@ -5,7 +5,7 @@ import UIKit
 
 public final class NexusCoreUser: @unchecked Sendable {
     public static let shared = NexusCoreUser()
-    public static let version = "0.0.15"
+    public static let version = "0.0.16"
 
     private var config: CoreUserConfig?
     private var storage: CoreUserStorage?
