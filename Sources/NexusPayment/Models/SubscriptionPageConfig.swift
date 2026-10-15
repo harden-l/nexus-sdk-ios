@@ -26,7 +26,7 @@ public struct SubscriptionPageConfig: Equatable, Sendable {
         templateId: String = SubscriptionPageTemplateId.aurora.rawValue,
         scene: String = "",
         title: String = "Upgrade to Pro",
-        benefitDescription: String = "Purchase one product and get VIP access to all other products.",
+        benefitDescription: String = "Unlock premium benefits in this app.",
         benefits: [String] = [],
         sharedApps: SubscriptionSharedAppsConfig = SubscriptionSharedAppsConfig(),
         paymentChannels: [PaymentChannel] = [],
@@ -66,7 +66,7 @@ public struct SubscriptionPageConfig: Equatable, Sendable {
 public struct SubscriptionSharedAppsConfig: Equatable, Sendable {
     public var title: String
     public var description: String
-    public init(title: String = "membership share", description: String = "Your membership gives you access to every current service in this app.") {
+    public init(title: String = "Related apps", description: String = "Explore more apps. Membership benefits are specific to each app.") {
         self.title = title
         self.description = description
     }
@@ -79,6 +79,7 @@ public enum SubscriptionPageEventName: String, Sendable {
     case purchaseClick = "purchase_click"
     case purchaseSuccess = "purchase_success"
     case purchaseFailed = "purchase_failed"
+    case purchasePending = "purchase_pending"
     case purchaseCancel = "purchase_cancel"
     case weeklyPointsClaimClick = "weekly_points_claim_click"
     case weeklyPointsClaimSuccess = "weekly_points_claim_success"

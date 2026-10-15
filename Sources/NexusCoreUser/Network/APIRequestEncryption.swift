@@ -33,8 +33,8 @@ public enum APIRequestEncryption {
     }
 
     private static func crypt(data: Data, key: String, operation: CCOperation) throws -> Data {
-        guard let keyData = key.data(using: .utf8), keyData.count == kCCKeySizeAES256 else {
-            throw CoreUserError.invalidConfig("encryptionKey must be 32 bytes for AES-256")
+        guard let keyData = key.data(using: .utf8), [16, 24, 32].contains(keyData.count) else {
+            throw CoreUserError.invalidConfig("encryptionKey must be 16, 24 or 32 bytes")
         }
         let ivData = Data(key.utf8.prefix(kCCBlockSizeAES128))
         let outputCapacity = data.count + kCCBlockSizeAES128

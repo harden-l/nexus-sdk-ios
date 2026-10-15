@@ -129,13 +129,13 @@ final class NexusRemoteDemoViewController: UIViewController {
             button("Show Bind Email Dialog", action: #selector(bindEmailDialogTapped)),
             button("Consume Chat Coins", action: #selector(consumeChatCoinsTapped)),
             button("Get Current User Cache", action: #selector(getCurrentUserTapped)),
-            button("Get Login Config", action: #selector(getLoginConfigTapped)),
+            button("Get Session Status", action: #selector(getSessionTapped)),
             button("Get SDK Config", action: #selector(getSdkConfigTapped)),
             button("Get Device ID", action: #selector(getDeviceIdTapped)),
             button("Enable Login Attribution", action: #selector(enableLoginAttributionTapped)),
             button("Disable Login Attribution", action: #selector(disableLoginAttributionTapped)),
             button("Get Related Products", action: #selector(getRelatedProductsTapped)),
-            button("Logout / Keep UID", action: #selector(logoutTapped))
+            button("Deregister Current User", action: #selector(logoutTapped))
         ]))
 
         bannerContainer.backgroundColor = .tertiarySystemBackground
@@ -196,7 +196,7 @@ final class NexusRemoteDemoViewController: UIViewController {
     }
 
     private func configureFields() {
-        apiBaseUrlField.text = "https://serverlf.stoahayaamhsothy.com/"
+        apiBaseUrlField.text = "https://aishare.stoahayaamhsothy.com"
         productIdField.text = "7"
         productNameField.text = "TEST PRODUCT"
         encryptionKeyField.text = "1b8df48c1fa64ce28a2e8133dffe600c"
@@ -387,7 +387,7 @@ final class NexusRemoteDemoViewController: UIViewController {
             productId: trimmedText(productIdField, fallback: "7"),
             productName: trimmedText(productNameField, fallback: "TEST PRODUCT"),
             accountName: "test",
-            apiBaseUrl: trimmedText(apiBaseUrlField, fallback: "https://serverlf.stoahayaamhsothy.com/"),
+            apiBaseUrl: trimmedText(apiBaseUrlField, fallback: "https://aishare.stoahayaamhsothy.com"),
             encrypt: encryptSwitch.isOn,
             encryptionKey: trimmedOptionalText(encryptionKeyField),
             debug: true,
@@ -516,10 +516,12 @@ final class NexusRemoteDemoViewController: UIViewController {
         }
     }
 
-    @objc private func getLoginConfigTapped() {
+    @objc private func getSessionTapped() {
         do {
+            let info = try NexusCoreUser.shared.getSessionInfo()
+            append("Session type=\(info?.loginType.rawValue ?? "none"), expiresAt=\(info?.expiresAt ?? 0), token available=\(try NexusCoreUser.shared.getToken() != nil)")
         } catch {
-            append("Get login config failed: \(error.localizedDescription)")
+            append("Get session failed: \(error.localizedDescription)")
         }
     }
 
@@ -575,7 +577,7 @@ final class NexusRemoteDemoViewController: UIViewController {
             do {
                 try await NexusCoreUser.shared.logout()
                 await MainActor.run {
-                    append("Logout success: server deregistered, cached user details cleared, uid retained for next login")
+                    append("Deregistered: user and token cleared; device identifier retained")
                 }
             } catch {
                 await MainActor.run { append("Logout failed: \(error.localizedDescription)") }

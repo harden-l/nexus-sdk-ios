@@ -14,13 +14,13 @@ The base `ios/Package.swift` stays free of third-party analytics and ad dependen
 Add the base package and only the Provider packages needed by the host App:
 
 ```swift
-.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.0.16"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.0.16"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.0.16"),
-.package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.0.16")
+.package(url: "https://github.com/harden-l/nexus-sdk-ios.git", exact: "0.1.0"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-firebase-provider.git", exact: "0.1.0"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-appsflyer-provider.git", exact: "0.1.0"),
+.package(url: "https://github.com/harden-l/nexus-sdk-ios-admob-provider.git", exact: "0.1.0")
 ```
 
-DataEye is published as a separate provider package at https://github.com/harden-l/nexus-sdk-ios-dataeye-provider.git. It uses a host-provided bridge and does not force the official DataEye SDK into the package dependency graph.
+Select `NexusGrowthAnalyticsAdDataEye` from the root SDK package for DataEye. Its separate repository is currently unavailable and is not required. Supply a host bridge to the official DataEye SDK; this product does not force CocoaPods dependencies into the package graph.
 
 Initialize with provider injection:
 

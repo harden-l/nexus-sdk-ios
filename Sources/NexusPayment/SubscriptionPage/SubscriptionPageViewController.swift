@@ -12,6 +12,11 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     private var selectedChannel: PaymentChannel?
     private var displayedChannels: [PaymentChannel] = []
     private var weeklyPointsInfo: WeeklyPointsInfo?
+    private var claimingWeeklyPoints = false
+    private var purchasing = false
+    private var pendingProductIds: Set<String> { sdk.getPendingProductIds() }
+    private var pageOperation: PaymentOperation?
+    private weak var purchaseButton: UIButton?
     private var loadGeneration = 0
 
     private let scrollView = UIScrollView()
@@ -44,6 +49,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         relatedProductsTimer?.invalidate()
     }
 
@@ -53,12 +59,31 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         view.backgroundColor = theme.pageBackground
         buildSkeleton()
         buildFloatingCloseButton()
+        NotificationCenter.default.addObserver(self, selector: #selector(paymentStateChanged), name: NexusPayment.stateDidChange, object: nil)
         loadData()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: false)
+        Task { try? await sdk.reconcilePendingPurchases() }
+    }
+
+    @objc private func paymentStateChanged() {
+        guard let operation = pageOperation, accept(operation) else { return }
+        updateActionSummary()
+    }
+
+    private func accept(_ operation: PaymentOperation) -> Bool {
+        guard (try? sdk.validate(operation)) != nil else {
+            weeklyPointsInfo = nil
+            claimingWeeklyPoints = false
+            purchasing = false
+            pageOperation = nil
+            loadData()
+            return false
+        }
+        return true
     }
 
     private func buildSkeleton() {
@@ -258,7 +283,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         switch theme.id {
         case .aurora: "Create, edit, and share premium work across your creative apps."
         case .midnight: "Generate, refine, and export with a faster creative workflow."
-        case .minimal: "Professional tools, shared access, and flexible creation credits."
+        case .minimal: "Professional tools and flexible creation credits."
         }
     }
 
@@ -268,9 +293,11 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         renderLoading()
         Task {
             do {
-                let loadedProducts = try await sdk.getAPIProducts(forceRefresh: true)
+                let operation = try await sdk.captureOperation()
+                let loadedProducts = try await sdk.getAPIProducts(forceRefresh: true, operation: operation)
                 await MainActor.run {
-                    guard generation == self.loadGeneration else { return }
+                    guard generation == self.loadGeneration, self.accept(operation) else { return }
+                    self.pageOperation = operation
                     do {
                         self.applyProducts(loadedProducts, preserveSelection: false)
                         self.displayedChannels = try self.resolvedChannels()
@@ -281,12 +308,12 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
                     }
                 }
 
-                async let enrichedProducts = sdk.enrichProductsWithAppStore(loadedProducts)
+                async let enrichedProducts = sdk.enrichProductsWithAppStore(loadedProducts, operation: operation)
                 async let loadedRelated = loadRelatedProducts()
-                async let loadedWeeklyPoints = loadWeeklyPointsInfo()
-                let (enriched, related, weeklyPoints) = await (enrichedProducts, loadedRelated, loadedWeeklyPoints)
+                async let loadedWeeklyPoints = try? operation.session.getWeeklyPointsInfo()
+                let (enriched, related, weeklyPoints) = try await (enrichedProducts, loadedRelated, loadedWeeklyPoints)
                 await MainActor.run {
-                    guard generation == self.loadGeneration else { return }
+                    guard generation == self.loadGeneration, self.accept(operation) else { return }
                     let changed = enriched != self.products ||
                         related != self.relatedProducts ||
                         weeklyPoints != self.weeklyPointsInfo
@@ -307,10 +334,6 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
     private func loadRelatedProducts() async -> [RelatedProduct] {
         (try? await sdk.getRelatedProducts(forceRefresh: true)) ?? []
-    }
-
-    private func loadWeeklyPointsInfo() async -> WeeklyPointsInfo? {
-        try? await sdk.getWeeklyPointsInfo()
     }
 
     private func applyProducts(_ loadedProducts: [Product], preserveSelection: Bool) {
@@ -459,7 +482,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
         let balance = UIStackView(arrangedSubviews: [
             textLabel("Balance", size: 12, color: theme.muted, alignment: .right),
-            textLabel(CoinAmountFormatter.displayUnitText(user.balance), size: 18, color: theme.primary, weight: .bold, alignment: .right)
+            textLabel(CoinAmountFormatter.displayUnitText(user.balanceDecimal), size: 18, color: theme.primary, weight: .bold, alignment: .right)
         ])
         balance.axis = .vertical
         balance.spacing = 2
@@ -480,13 +503,10 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
     private func addWeeklyPointsSection() {
         guard let info = weeklyPointsInfo else { return }
-        let configuredPoints = products
-            .filter { $0.productType == .subscription && $0.weeklyPointsEnabled }
-            .map(\.weeklyPoints)
-            .max() ?? 0
-        guard configuredPoints > 0 || info.weeklyPoints > 0 else { return }
-        let points = max(configuredPoints, info.weeklyPoints)
-        let displayedPoints = points * 100
+        let hasWeeklyProduct = products.contains {
+            $0.productType == .subscription && $0.weeklyPointsEnabled && $0.weeklyPointsDecimal > 0
+        }
+        guard hasWeeklyProduct || info.weeklyPointsDecimal > 0 || info.cannotClaimReason == "already_claimed" else { return }
 
         let iconName = theme.id == .midnight ? "gift.fill" : "calendar.badge.clock"
         let icon = UIImageView(image: UIImage(systemName: iconName))
@@ -499,16 +519,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
             icon.heightAnchor.constraint(equalToConstant: 52)
         ])
 
-        let detail: String
-        if info.canClaim {
-            detail = "\(displayedPoints) points ready to claim"
-        } else if info.cannotClaimReason == "already_claimed" {
-            detail = "Claimed for this week"
-        } else if info.cannotClaimReason == "no_valid_subscription" {
-            detail = "Subscribe to earn \(displayedPoints) points weekly"
-        } else {
-            detail = "\(displayedPoints) points per week"
-        }
+        let detail = ProductPresentation.claimDetail(info)
         let copy = UIStackView(arrangedSubviews: [
             textLabel("Weekly points", size: 16, color: theme.title, weight: .bold),
             textLabel(detail, size: 13, color: theme.muted, maxLines: 2)
@@ -525,7 +536,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         claim.layer.cornerRadius = theme.id == .midnight ? 7 : 14
         claim.layer.borderWidth = 1
         claim.layer.borderColor = ((info.canClaim || needsSubscription) ? theme.primary : theme.border).cgColor
-        claim.isEnabled = info.canClaim || needsSubscription
+        claim.isEnabled = !claimingWeeklyPoints && (info.canClaim || needsSubscription)
         claim.widthAnchor.constraint(equalToConstant: 94).isActive = true
         claim.heightAnchor.constraint(equalToConstant: 44).isActive = true
         claim.addAction(UIAction { [weak self] _ in
@@ -554,29 +565,34 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     }
 
     private func claimWeeklyPointsTapped() {
-        guard let info = weeklyPointsInfo, info.canClaim else { return }
+        guard let operation = pageOperation, accept(operation),
+              let info = weeklyPointsInfo, info.canClaim, !claimingWeeklyPoints else { return }
+        claimingWeeklyPoints = true
+        render(preserveScrollPosition: true)
         dispatchEvent(name: .weeklyPointsClaimClick, productId: info.marketProductId, state: .ready)
         Task {
             do {
-                let result = try await sdk.claimWeeklyPoints(marketProductId: info.marketProductId)
+                let result = try await sdk.claimWeeklyPoints(operation: operation)
+                let refreshedInfo = try? await operation.session.getWeeklyPointsInfo()
                 await MainActor.run {
-                    self.weeklyPointsInfo = WeeklyPointsInfo(
-                        isVip: info.isVip,
-                        marketProductId: info.marketProductId,
-                        weeklyPoints: info.weeklyPoints,
-                        canClaim: false,
-                        cannotClaimReason: "already_claimed"
-                    )
+                    guard self.accept(operation) else { return }
+                    self.claimingWeeklyPoints = false
+                    self.weeklyPointsInfo = refreshedInfo
                     self.render(preserveScrollPosition: true)
                     self.dispatchEvent(
                         name: .weeklyPointsClaimSuccess,
-                        productId: info.marketProductId,
+                        productId: result.productId,
                         state: .success,
-                        params: ["points": result.points, "transaction_id": result.transactionId]
+                        params: ["points": NSDecimalNumber(decimal: result.pointsDecimal).stringValue, "transaction_id": result.transactionId]
                     )
                 }
             } catch {
+                let refreshedInfo = try? await operation.session.getWeeklyPointsInfo()
                 await MainActor.run {
+                    guard self.accept(operation) else { return }
+                    self.claimingWeeklyPoints = false
+                    self.weeklyPointsInfo = refreshedInfo
+                    self.render(preserveScrollPosition: true)
                     self.dispatchEvent(
                         name: .weeklyPointsClaimFailed,
                         productId: info.marketProductId,
@@ -593,7 +609,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
 
     private func guideToWeeklySubscription() {
         guard let product = products.first(where: {
-            $0.productType == .subscription && $0.weeklyPointsEnabled && $0.weeklyPoints > 0
+            $0.productType == .subscription && $0.weeklyPointsEnabled && $0.weeklyPointsDecimal > 0
         }) else { return }
         selectProduct(product)
         guard let card = productCards[product.marketProductId] else { return }
@@ -834,6 +850,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
            weeklyPointsInfo?.marketProductId == product.marketProductId {
             return "CURRENT PLAN"
         }
+        if product.productType == .subscription { return nil }
         guard let entitlement = sdk.getEntitlements().first(where: {
             $0.productId == product.marketProductId ||
                 (product.entitlementId != nil && $0.entitlementId == product.entitlementId)
@@ -868,6 +885,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     private func selectChannel(_ channel: PaymentChannel) {
         selectedChannel = channel
         channelCards.forEach { value, card in card.isSelected = value == channel }
+        updateActionSummary()
         dispatchEvent(name: .channelSelect, paymentChannel: channel, state: .ready)
     }
 
@@ -897,11 +915,12 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         actionSummary.font = .systemFont(ofSize: 12, weight: .medium)
         actionSummary.textColor = theme.muted
         actionSummary.textAlignment = .center
-        actionSummary.numberOfLines = 1
+        actionSummary.numberOfLines = 2
         actionHost.addArrangedSubview(actionSummary)
         updateActionSummary()
 
         let cta = UIButton(type: .system)
+        purchaseButton = cta
         cta.setTitle(pageConfig.ctaText, for: .normal)
         cta.titleLabel?.font = .boldSystemFont(ofSize: 17)
         cta.backgroundColor = theme.primary
@@ -911,14 +930,19 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         cta.addAction(UIAction { [weak self] _ in self?.purchaseTapped() }, for: .touchUpInside)
         actionHost.addArrangedSubview(cta)
         actionHost.setCustomSpacing(14, after: cta)
+        updateActionSummary()
     }
 
     private func updateActionSummary() {
+        let available = !purchasing && ProductPresentation.canPurchase(selectedProduct, channel: selectedChannel, pendingProductIds: pendingProductIds)
+        purchaseButton?.isEnabled = available
+        purchaseButton?.alpha = available ? 1 : 0.5
         guard let product = selectedProduct else {
             actionSummary.text = nil
             return
         }
-        actionSummary.text = [productDisplayName(product), product.localizedPrice ?? product.price]
+        purchaseButton?.setTitle(pendingProductIds.contains(product.marketProductId) ? "Pending" : pageConfig.ctaText, for: .normal)
+        actionSummary.text = [productDisplayName(product), ProductPresentation.price(product)]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: "  •  ")
@@ -1186,26 +1210,34 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     }
 
     private func purchaseTapped() {
-        guard let product = selectedProduct else {
-            dispatchEvent(name: .purchaseFailed, state: .failed, params: ["message": "No product selected"])
-            return
-        }
+        guard let operation = pageOperation, accept(operation), !purchasing, let product = selectedProduct,
+              ProductPresentation.canPurchase(product, channel: selectedChannel, pendingProductIds: pendingProductIds) else { return }
+        purchasing = true
+        updateActionSummary()
         let channel = selectedChannel
         dispatchEvent(name: .purchaseClick, productId: product.marketProductId, paymentChannel: channel, state: .purchasing)
         Task {
             do {
-                let result = try await sdk.purchase(product: product, channel: channel)
+                let result = try await sdk.purchase(product: product, channel: channel, operation: operation)
+                let refreshedInfo = try? await operation.session.getWeeklyPointsInfo()
                 await MainActor.run {
+                    guard self.accept(operation) else { return }
+                    self.purchasing = false
+                    self.weeklyPointsInfo = refreshedInfo
+                    self.render(preserveScrollPosition: true)
                     self.dispatchEvent(
-                        name: result.success ? .purchaseSuccess : .purchaseFailed,
+                        name: result.success ? .purchaseSuccess : (result.pending ? .purchasePending : .purchaseFailed),
                         productId: product.marketProductId,
                         paymentChannel: result.channel,
-                        state: result.success ? .success : .failed,
+                        state: result.success ? .success : (result.pending ? .purchasing : .failed),
                         params: ["order_id": result.orderId, "message": result.message]
                     )
                 }
             } catch {
                 await MainActor.run {
+                    guard self.accept(operation) else { return }
+                    self.purchasing = false
+                    self.updateActionSummary()
                     self.dispatchEvent(name: .purchaseFailed, productId: product.marketProductId, paymentChannel: channel, state: .failed, params: ["message": error.localizedDescription])
                 }
             }
@@ -1213,6 +1245,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
     }
 
     private func restoreTapped() {
+        guard let operation = pageOperation, accept(operation) else { return }
         guard let selectedChannel else {
             dispatchEvent(name: .restoreFailed, state: .failed, params: ["message": "No payment channel selected"])
             return
@@ -1220,8 +1253,12 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
         dispatchEvent(name: .restoreClick, paymentChannel: selectedChannel, state: .purchasing)
         Task {
             do {
-                let result = try await sdk.restore(channel: selectedChannel)
+                let result = try await sdk.restore(channel: selectedChannel, operation: operation)
+                let refreshedInfo = try? await operation.session.getWeeklyPointsInfo()
                 await MainActor.run {
+                    guard self.accept(operation) else { return }
+                    self.weeklyPointsInfo = refreshedInfo
+                    self.render(preserveScrollPosition: true)
                     self.dispatchEvent(
                         name: .restoreSuccess,
                         paymentChannel: result.channel,
@@ -1231,6 +1268,7 @@ final class SubscriptionPageViewController: UIViewController, UIScrollViewDelega
                 }
             } catch {
                 await MainActor.run {
+                    guard self.accept(operation) else { return }
                     self.dispatchEvent(name: .restoreFailed, paymentChannel: selectedChannel, state: .failed, params: ["message": error.localizedDescription])
                 }
             }
@@ -1340,7 +1378,7 @@ private final class ProductOptionCard: UIControl {
         column.axis = .vertical
         column.spacing = layout == .compact ? 4 : 6
         let title = label(displayName(product), size: layout == .offer ? 20 : 17, color: theme.title, weight: .bold, lines: 3)
-        let price = label(product.localizedPrice ?? product.price ?? "", size: layout == .offer ? 17 : 16, color: layout == .offer ? theme.primary : theme.title, weight: .bold, lines: 1)
+        let price = label(ProductPresentation.price(product) ?? "", size: layout == .offer ? 17 : 16, color: layout == .offer ? theme.primary : theme.title, weight: .bold, lines: 2)
         price.adjustsFontSizeToFitWidth = true
         price.minimumScaleFactor = 0.75
         price.allowsDefaultTighteningForTruncation = true
@@ -1370,10 +1408,8 @@ private final class ProductOptionCard: UIControl {
         ].compactMap { $0 }.joined(separator: "  •  ")
         if !metadata.isEmpty { column.addArrangedSubview(label(metadata, size: 12, color: theme.muted, lines: 2)) }
         column.addArrangedSubview(label(productValueLine(product), size: 12, color: theme.muted, weight: .semibold, lines: 2))
-        if product.productType == .subscription, product.weeklyPointsEnabled, product.weeklyPoints > 0 {
-            column.addArrangedSubview(label("\(product.weeklyPoints * 100) points every week", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 2))
-        } else if let coins = product.coinsGranted, coins > 0 {
-            let coinValue = label("Get \(CoinAmountFormatter.displayText(coins)) credits after purchase", size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 3)
+        for benefit in ProductPresentation.creditBenefits(product) {
+            let coinValue = label(benefit, size: layout == .feature ? 13 : 12, color: theme.primary, weight: .bold, lines: 0)
             coinValue.adjustsFontSizeToFitWidth = true
             coinValue.minimumScaleFactor = 0.78
             coinValue.allowsDefaultTighteningForTruncation = true

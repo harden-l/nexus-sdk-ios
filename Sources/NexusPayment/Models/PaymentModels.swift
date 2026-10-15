@@ -109,13 +109,21 @@ public struct Product: Equatable, Codable, Sendable {
     public var benefits: [String]
     public var weeklyPointsEnabled: Bool
     public var weeklyPoints: Int
+    /// Raw server units. Multiply by 100 only when presenting credits.
+    public var coinsGrantedDecimal: Decimal
+    public var weeklyPointsDecimal: Decimal
+    /// Reference price in USD cents; never a checkout price.
+    public var priceUsd: Int?
+    public var sort: Int
+    public var storeDetailsAvailable: Bool
 
-    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Double? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = [], weeklyPointsEnabled: Bool = false, weeklyPoints: Int = 0) {
+    public init(marketProductId: String, name: String, description: String = "", productType: ProductType, coinsGranted: Double? = nil, price: String? = nil, currency: String? = nil, localizedPrice: String? = nil, subscriptionPeriod: String? = nil, trialPeriod: String? = nil, hasTrial: Bool = false, entitlementId: String? = nil, benefits: [String] = [], weeklyPointsEnabled: Bool = false, weeklyPoints: Int = 0, coinsGrantedDecimal: Decimal? = nil, weeklyPointsDecimal: Decimal? = nil, priceUsd: Int? = nil, sort: Int = 0, storeDetailsAvailable: Bool = false) {
         self.marketProductId = marketProductId
         self.name = name
         self.description = description
         self.productType = productType
-        self.coinsGranted = coinsGranted
+        self.coinsGrantedDecimal = coinsGrantedDecimal ?? coinsGranted.flatMap { Decimal(string: String($0)) } ?? 0
+        self.coinsGranted = coinsGrantedDecimal.map { NSDecimalNumber(decimal: $0).doubleValue } ?? coinsGranted
         self.price = price
         self.currency = currency
         self.localizedPrice = localizedPrice
@@ -125,7 +133,44 @@ public struct Product: Equatable, Codable, Sendable {
         self.entitlementId = entitlementId
         self.benefits = benefits
         self.weeklyPointsEnabled = weeklyPointsEnabled
-        self.weeklyPoints = weeklyPoints
+        self.weeklyPointsDecimal = weeklyPointsDecimal ?? Decimal(weeklyPoints)
+        self.weeklyPoints = weeklyPointsDecimal.map { NSDecimalNumber(decimal: $0).intValue } ?? weeklyPoints
+        self.priceUsd = priceUsd
+        self.sort = sort
+        self.storeDetailsAvailable = storeDetailsAvailable
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case marketProductId, name, description, productType, coinsGranted, price, currency, localizedPrice
+        case subscriptionPeriod, trialPeriod, hasTrial, entitlementId, benefits, weeklyPointsEnabled, weeklyPoints
+        case coinsGrantedDecimal, weeklyPointsDecimal, priceUsd, sort, storeDetailsAvailable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            marketProductId: try values.decode(String.self, forKey: .marketProductId),
+            name: try values.decode(String.self, forKey: .name),
+            description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
+            productType: try values.decode(ProductType.self, forKey: .productType),
+            coinsGranted: try values.decodeIfPresent(Double.self, forKey: .coinsGranted),
+            price: try values.decodeIfPresent(String.self, forKey: .price),
+            currency: try values.decodeIfPresent(String.self, forKey: .currency),
+            localizedPrice: try values.decodeIfPresent(String.self, forKey: .localizedPrice),
+            subscriptionPeriod: try values.decodeIfPresent(String.self, forKey: .subscriptionPeriod),
+            trialPeriod: try values.decodeIfPresent(String.self, forKey: .trialPeriod),
+            hasTrial: try values.decodeIfPresent(Bool.self, forKey: .hasTrial) ?? false,
+            entitlementId: try values.decodeIfPresent(String.self, forKey: .entitlementId),
+            benefits: try values.decodeIfPresent([String].self, forKey: .benefits) ?? [],
+            weeklyPointsEnabled: try values.decodeIfPresent(Bool.self, forKey: .weeklyPointsEnabled) ?? false,
+            weeklyPoints: try values.decodeIfPresent(Int.self, forKey: .weeklyPoints) ?? 0,
+            coinsGrantedDecimal: try values.decodeIfPresent(Decimal.self, forKey: .coinsGrantedDecimal)
+                ?? values.decodeIfPresent(Decimal.self, forKey: .coinsGranted),
+            weeklyPointsDecimal: try values.decodeIfPresent(Decimal.self, forKey: .weeklyPointsDecimal),
+            priceUsd: try values.decodeIfPresent(Int.self, forKey: .priceUsd),
+            sort: try values.decodeIfPresent(Int.self, forKey: .sort) ?? 0,
+            storeDetailsAvailable: try values.decodeIfPresent(Bool.self, forKey: .storeDetailsAvailable) ?? false
+        )
     }
 }
 
@@ -137,6 +182,21 @@ public struct Entitlement: Equatable, Codable, Sendable {
     public var startedTime: Int64?
     public var endsTime: Int64?
     public var active: Bool
+    public var reconciliationPending: Bool = false
+}
+
+extension Entitlement {
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        entitlementId = try values.decode(String.self, forKey: .entitlementId)
+        productId = try values.decode(String.self, forKey: .productId)
+        orderId = try values.decode(String.self, forKey: .orderId)
+        channel = try values.decode(PaymentChannel.self, forKey: .channel)
+        startedTime = try values.decodeIfPresent(Int64.self, forKey: .startedTime)
+        endsTime = try values.decodeIfPresent(Int64.self, forKey: .endsTime)
+        active = try values.decode(Bool.self, forKey: .active)
+        reconciliationPending = try values.decodeIfPresent(Bool.self, forKey: .reconciliationPending) ?? false
+    }
 }
 
 public struct OrderVerificationResult: Equatable, Sendable {
@@ -146,15 +206,16 @@ public struct OrderVerificationResult: Equatable, Sendable {
         case failed
         case cancelled
         case refunded
+        case expired
         case unknown
 
         public static func fromCode(_ code: Int?) -> Status {
             switch code {
             case 10: .pending
-            case 20: .success
-            case 60: .failed
+            case 50: .success
+            case 60: .refunded
             case 70: .cancelled
-            case 80: .refunded
+            case 80: .expired
             default: .unknown
             }
         }
@@ -169,7 +230,9 @@ public struct OrderVerificationResult: Equatable, Sendable {
     public var endsTime: Int64?
     public var successCount: Int?
     public var amount: String?
+    public var currency: String? = nil
     public var isSuccessful: Bool { status == .success }
+    public var isTerminal: Bool { [.refunded, .cancelled, .expired].contains(status) }
 }
 
 public struct PurchaseResult: Equatable, Sendable {
@@ -180,6 +243,8 @@ public struct PurchaseResult: Equatable, Sendable {
     public var message: String?
     public var verification: OrderVerificationResult?
     public var entitlement: Entitlement?
+    /// Payment may already have completed. Reconcile this purchase; do not start checkout again.
+    public var pending: Bool = false
 }
 
 public enum PaymentError: Error, LocalizedError, Equatable {

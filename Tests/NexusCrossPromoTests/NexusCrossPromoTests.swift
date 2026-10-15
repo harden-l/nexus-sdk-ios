@@ -1,5 +1,5 @@
 import XCTest
-import NexusCoreUser
+@testable import NexusCoreUser
 import NexusGrowthAnalyticsAd
 @testable import NexusCrossPromo
 
@@ -9,9 +9,10 @@ final class NexusCrossPromoTests: XCTestCase {
         core.initialize(config: try CoreUserConfig(productId: "target", productName: "demo", accountName: "test-account", apiBaseUrl: "https://example.com", encrypt: false))
         try core.clearLocalSession()
         let storageUser = SDKUser(uid: "target-uid", deviceId: try core.getDeviceId(), email: "user@example.com")
-        let mirror = Mirror(reflecting: core)
-        XCTAssertNotNil(mirror)
-        UserDefaults.standard.set(try JSONEncoder().encode(storageUser), forKey: "nexus.coreuser.target.user")
+        let storage = CoreUserStorage(productId: "target", apiBaseUrl: "https://example.com")
+        try storage.saveSession(LoginSession(uid: "target-uid", token: "test-token", expiresAt: 4102444800, loginType: .guest))
+        storage.saveUser(storageUser)
+        defer { try? core.clearLocalSession() }
 
         let sdk = NexusCrossPromo.shared
         sdk.initialize(config: try CrossPromoConfig(sourceProductId: "target"))

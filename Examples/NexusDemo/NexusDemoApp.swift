@@ -30,6 +30,11 @@ final class NexusDemoViewController: UIViewController {
     private let grantTierField = UITextField()
     private let bindEmailField = UITextField()
     private let passwordField = UITextField()
+    private let phonePrefixField = UITextField()
+    private let phoneField = UITextField()
+    private let costField = UITextField()
+    private let remarkField = UITextField()
+    private let billKeyField = UITextField()
     private let encryptSwitch = UISwitch()
     private let loginTypeControl = UISegmentedControl(items: NexusDemoViewController.loginTypes.map(\.rawValue))
     private let stack = UIStackView()
@@ -50,6 +55,12 @@ final class NexusDemoViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--v1-verify") {
+            runV1VerificationIfNeeded()
+            return
+        }
+        #endif
         openSubscriptionPageFromLaunchArgumentsIfNeeded()
     }
 
@@ -106,20 +117,27 @@ final class NexusDemoViewController: UIViewController {
             labeledControl("Login Type", loginTypeControl),
             labeledField("Bind Email", bindEmailField),
             labeledField("Password", passwordField),
+            labeledField("Phone prefix", phonePrefixField),
+            labeledField("Phone", phoneField),
             button("Run CoreUser Full Flow", action: #selector(runCoreUserFullFlowTapped)),
             button("Silent Login", action: #selector(loginTapped)),
             button("Fetch User Info", action: #selector(fetchUserInfoTapped)),
             button("Bind Email Directly", action: #selector(bindEmailDirectlyTapped)),
             button("Show Bind Email Dialog", action: #selector(bindEmailDialogTapped)),
             button("Get Current User Cache", action: #selector(getCurrentUserTapped)),
-            button("Get Login Config", action: #selector(getLoginConfigTapped)),
-            button("Fetch Switch Config", action: #selector(fetchSwitchConfigTapped)),
+            button("Get Session / Token Status", action: #selector(getSessionTapped)),
+            labeledField("Cost (server units)", costField),
+            labeledField("Remark", remarkField),
+            labeledField("Bill idempotency key", billKeyField),
+            button("New Bill Key", action: #selector(newBillTapped)),
+            button("Consume Chat Coins", action: #selector(consumeTapped)),
             button("Get SDK Config", action: #selector(getSdkConfigTapped)),
             button("Get Device ID", action: #selector(getDeviceIdTapped)),
             button("Enable Login Attribution", action: #selector(enableLoginAttributionTapped)),
             button("Disable Login Attribution", action: #selector(disableLoginAttributionTapped)),
             button("Get Related Products", action: #selector(getRelatedProductsTapped)),
-            button("Logout / Keep UID", action: #selector(logoutTapped))
+            button("Deregister Current User", action: #selector(logoutTapped)),
+            button("Clear Local Session", action: #selector(clearSessionTapped))
         ]))
 
         bannerContainer.backgroundColor = .tertiarySystemBackground
@@ -157,7 +175,13 @@ final class NexusDemoViewController: UIViewController {
     }
 
     private func configureFields() {
-        apiBaseUrlField.text = "https://serverlf.stoahayaamhsothy.com/"
+        apiBaseUrlField.text = "https://aishare.stoahayaamhsothy.com"
+        phonePrefixField.text = "86"
+        phoneField.keyboardType = .phonePad
+        costField.text = "0.001"
+        costField.keyboardType = .decimalPad
+        remarkField.text = "demo chat billing"
+        billKeyField.text = UUID().uuidString
         productIdField.text = "7"
         productNameField.text = "TEST PRODUCT"
         encryptionKeyField.text = "1b8df48c1fa64ce28a2e8133dffe600c"
@@ -168,6 +192,12 @@ final class NexusDemoViewController: UIViewController {
         passwordField.placeholder = "Required for binding and email login"
         passwordField.isSecureTextEntry = true
         encryptSwitch.isOn = true
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--v1-fixture") {
+            apiBaseUrlField.text = "http://127.0.0.1:18082"
+            encryptSwitch.isOn = false
+        }
+        #endif
         loginTypeControl.selectedSegmentIndex = 0
 
         [apiBaseUrlField, productIdField, productNameField, encryptionKeyField, grantTierField, bindEmailField, passwordField].forEach {
@@ -248,8 +278,7 @@ final class NexusDemoViewController: UIViewController {
             append("Payment initialized with API products and App Store checkout")
 
             NexusCrossPromo.shared.initialize(config: try CrossPromoConfig(sourceProductId: productId, campaign: "ios_demo", defaultPlacement: "demo_home"))
-            NexusCrossPromo.shared.setProductsForTesting(demoPromoProducts())
-            append("CrossPromo initialized with mock products")
+            append("CrossPromo initialized with API related products")
 
             _ = try NexusGrowthAnalyticsAd.shared.track("demo_open", params: ["screen": "main"])
             append("Tracked demo_open")
@@ -273,7 +302,7 @@ final class NexusDemoViewController: UIViewController {
             productId: trimmedText(productIdField, fallback: "7"),
             productName: trimmedText(productNameField, fallback: "TEST PRODUCT"),
             accountName: "test",
-            apiBaseUrl: trimmedText(apiBaseUrlField, fallback: "https://serverlf.stoahayaamhsothy.com/"),
+            apiBaseUrl: trimmedText(apiBaseUrlField, fallback: "https://aishare.stoahayaamhsothy.com"),
             encrypt: encryptSwitch.isOn,
             encryptionKey: trimmedOptionalText(encryptionKeyField),
             debug: true,
@@ -337,11 +366,7 @@ final class NexusDemoViewController: UIViewController {
                 password: passwordField.text ?? ""
             )
         case .phone:
-            throw NSError(
-                domain: "NexusDemo",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Use loginWithPhone(phonePrefix:phone:password:) with phone input"]
-            )
+            return try await NexusCoreUser.shared.loginWithPhone(phonePrefix: phonePrefixField.text ?? "", phone: phoneField.text ?? "", password: passwordField.text ?? "")
         }
     }
 
@@ -379,20 +404,35 @@ final class NexusDemoViewController: UIViewController {
         }
     }
 
-    @objc private func getLoginConfigTapped() {
+    @objc private func getSessionTapped() {
         do {
+            let session = try NexusCoreUser.shared.getSessionInfo()
+            let available = try NexusCoreUser.shared.getToken() != nil
+            append("Session type=\(session?.loginType.rawValue ?? "none"), expiresAt=\(session?.expiresAt ?? 0), token available=\(available)")
         } catch {
-            append("Get login config failed: \(error.localizedDescription)")
+            append("Session status failed: \(error.localizedDescription)")
         }
     }
 
-    @objc private func fetchSwitchConfigTapped() {
+    @objc private func clearSessionTapped() {
+        do { try NexusCoreUser.shared.clearLocalSession(); append("Local session cleared") }
+        catch { append(error.localizedDescription) }
+    }
+
+    @objc private func newBillTapped() { billKeyField.text = UUID().uuidString }
+
+    @objc private func consumeTapped() {
+        guard let cost = Decimal(string: costField.text ?? "", locale: Locale(identifier: "en_US_POSIX")), cost > 0 else {
+            append("Enter a positive cost in server units"); return
+        }
+        let remark = remarkField.text
+        let key = billKeyField.text ?? ""
         Task {
             do {
-                let config = try await NexusCoreUser.shared.fetchSwitchConfig()
-                await MainActor.run { append("Switch config: \(config)") }
+                let result = try await NexusCoreUser.shared.consumeChatCoins(cost: cost, remark: remark, idempotencyKey: key)
+                await MainActor.run { append("Debit raw before=\(result.beforeCoinsDecimal), after=\(result.afterCoinsDecimal), balance=\(result.balanceDecimal). Reuse this bill key only for the same bill.") }
             } catch {
-                await MainActor.run { append("Fetch switch config failed: \(error.localizedDescription)") }
+                await MainActor.run { append("Debit failed: \(error.localizedDescription)") }
             }
         }
     }
@@ -449,7 +489,7 @@ final class NexusDemoViewController: UIViewController {
             do {
                 try await NexusCoreUser.shared.logout()
                 await MainActor.run {
-                    append("Logout success: server deregistered, cached user details and login config cleared; uid retained for next login")
+                    append("Deregistered: user and token cleared; device identifier retained")
                 }
             } catch {
                 await MainActor.run { append("Logout failed: \(error.localizedDescription)") }
@@ -555,7 +595,7 @@ final class NexusDemoViewController: UIViewController {
                 title: "Create without limits",
                 benefitDescription: "Generate, refine, and export studio-quality work across your creative apps with premium models, faster queues, and flexible creation credits.",
                 benefits: ["Image generation", "HD export", "Commercial use"],
-                sharedApps: SubscriptionSharedAppsConfig(title: "Membership Share", description: "Your membership gives you access to every current service in this app."),
+                sharedApps: SubscriptionSharedAppsConfig(title: "Related apps", description: "Explore other apps. Membership benefits are specific to each product."),
                 paymentChannels: [.appStore],
                 ctaText: "Start Pro",
                 restoreText: "Restore"
@@ -566,6 +606,79 @@ final class NexusDemoViewController: UIViewController {
             append("Show subscription failed: \(error.localizedDescription)")
         }
     }
+
+    #if DEBUG
+    private func runV1VerificationIfNeeded() {
+        guard !handledSubscriptionLaunchArgument else { return }
+        handledSubscriptionLaunchArgument = true
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--v1-verify"), arguments.indices.contains(index + 1) else { return }
+        let phase = arguments[index + 1]
+        let testDefaults = UserDefaults(suiteName: "nexus-ios-v1-verification")!
+        let testSuite = testDefaults.string(forKey: "suite") ?? "nexus-ios-v1-device-" + UUID().uuidString
+        testDefaults.set(testSuite, forKey: "suite")
+        Task {
+            func check(_ condition: Bool, _ message: String) throws {
+                if !condition { throw NSError(domain: "V1Verification", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+            }
+            do {
+                var config = try makeCoreConfig()
+                config.gt = 1
+                let sdk = NexusCoreUser.shared
+                sdk.initialize(config: config, appGroupSuiteName: testSuite)
+                if phase == "seed" {
+                    try check(try sdk.getToken() == nil, "Seed must start with a new isolated session")
+                    let user = try await sdk.silentLogin()
+                    try check(user.balanceDecimal == 10, "Registration grant balance scale")
+                    testDefaults.set(user.uid, forKey: "uid")
+                    append("V1 seed PASS: encrypted login, balance x100, isolated identity. Restart app with resume.")
+                } else if phase == "resume" {
+                    let token = try sdk.getToken()
+                    try check(token != nil, "Keychain token must survive process restart")
+                    let user = try await sdk.fetchUserInfo()
+                    try check(user.uid == testDefaults.string(forKey: "uid"), "Restored identity")
+                    var request = URLRequest(url: URL(string: config.apiBaseUrl + "/api/v1/account/info")!)
+                    request.httpMethod = "POST"
+                    request.httpBody = Data("{}".utf8)
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("0", forHTTPHeaderField: "Encrypt")
+                    request.setValue(config.productId, forHTTPHeaderField: "ProductId")
+                    request.setValue("Bearer " + (token ?? ""), forHTTPHeaderField: "Authorization")
+                    let (data, _) = try await URLSession.shared.data(for: request)
+                    let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    try check(envelope?["code"] as? Int == 1, "Host-owned request with exported token")
+                    let email = "nexus-ios-device-" + UUID().uuidString.lowercased() + "@example.com"
+                    let password = "DeviceTest!" + UUID().uuidString
+                    _ = try await sdk.bindEmail(email, password: password)
+                    let account = try await sdk.loginWithEmail(email: email.uppercased(), password: password)
+                    try check(account.uid == user.uid, "Email account identity")
+                    let key = UUID().uuidString
+                    let first = try await sdk.consumeChatCoins(cost: Decimal(string: "0.001")!, remark: "iOS simulator verification", idempotencyKey: key)
+                    let repeated = try await sdk.consumeChatCoins(cost: Decimal(string: "0.001")!, remark: "iOS simulator verification", idempotencyKey: key)
+                    try check(first.balanceDecimal == repeated.balanceDecimal, "No duplicate debit")
+                    let updated = try await sdk.fetchUserInfo()
+                    try check(updated.balanceDecimal == first.balanceDecimal * 100, "Balance scale exactly once")
+                    let weekly = try await sdk.getWeeklyPointsInfo()
+                    try check(!weekly.canClaim, "No subscription must not claim")
+                    let products = try await NexusPayment.shared.getProducts(forceRefresh: true)
+                    let related = try await sdk.getRelatedProducts()
+                    append("V1 resume PASS: Keychain restart, exported token, email bind/login, debit idempotency, balance. Catalog=\(products.count), related=\(related.count)")
+                    try await sdk.logout()
+                    try check(try sdk.getToken() == nil, "Deregistration clears token")
+                    testDefaults.removeObject(forKey: "suite")
+                    testDefaults.removeObject(forKey: "uid")
+                    append("V1 cleanup PASS: isolated test account deregistered")
+                } else {
+                    try await sdk.logout()
+                    testDefaults.removeObject(forKey: "suite")
+                    append("V1 cleanup PASS")
+                }
+            } catch { append("V1 \(phase) FAILED: \(error.localizedDescription). Keep isolated session for cleanup.") }
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            try? logView.text.write(to: documents.appendingPathComponent("v1-\(phase).txt"), atomically: true, encoding: .utf8)
+        }
+    }
+    #endif
 
     private func openSubscriptionPageFromLaunchArgumentsIfNeeded() {
         guard !handledSubscriptionLaunchArgument else { return }
@@ -594,7 +707,7 @@ final class NexusDemoViewController: UIViewController {
             do {
                 let info = try await NexusPayment.shared.getWeeklyPointsInfo()
                 await MainActor.run {
-                    append("Weekly points: product=\(info.marketProductId), points=\(info.weeklyPoints), canClaim=\(info.canClaim)")
+                    append("Weekly points (raw): product=\(info.marketProductId), points=\(info.weeklyPointsDecimal), canClaim=\(info.canClaim)")
                 }
             } catch {
                 await MainActor.run { append("Get weekly points failed: \(error.localizedDescription)") }
@@ -606,7 +719,7 @@ final class NexusDemoViewController: UIViewController {
         Task {
             do {
                 let result = try await NexusPayment.shared.claimWeeklyPoints()
-                await MainActor.run { append("Claimed weekly points: success=\(result.success), points=\(result.points)") }
+                await MainActor.run { append("Claimed weekly points (raw): success=\(result.success), points=\(result.pointsDecimal)") }
             } catch {
                 await MainActor.run { append("Claim weekly points failed: \(error.localizedDescription)") }
             }

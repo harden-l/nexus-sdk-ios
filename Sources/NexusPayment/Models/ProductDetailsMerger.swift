@@ -26,7 +26,12 @@ enum ProductDetailsMerger {
                 entitlementId: apiProduct.entitlementId,
                 benefits: apiProduct.benefits,
                 weeklyPointsEnabled: apiProduct.weeklyPointsEnabled,
-                weeklyPoints: apiProduct.weeklyPoints
+                weeklyPoints: apiProduct.weeklyPoints,
+                coinsGrantedDecimal: apiProduct.coinsGrantedDecimal,
+                weeklyPointsDecimal: apiProduct.weeklyPointsDecimal,
+                priceUsd: apiProduct.priceUsd,
+                sort: apiProduct.sort,
+                storeDetailsAvailable: storeProduct.storeDetailsAvailable
             )
         }
     }

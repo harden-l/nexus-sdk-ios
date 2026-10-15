@@ -7,18 +7,25 @@ import UIKit
 
 public final class NexusPayment: @unchecked Sendable {
     public static let shared = NexusPayment()
-    public static let version = "0.0.16"
+    public static let version = "0.1.0"
 
     private var config: PaymentConfig?
     private var providers: [PaymentChannel: PaymentProvider] = [:]
     private var appStoreProvider: AppStorePaymentProvider?
-    private var orderVerificationAPI: OrderVerificationAPI?
     private var products: [Product] = []
     private var apiProducts: [Product] = []
     private var relatedProducts: [RelatedProduct] = []
     private var useTestingProducts = false
     private var useTestingRelatedProducts = false
-    private let entitlementLock = NSLock()
+    private let stateLock = NSRecursiveLock()
+    private var generation = UUID()
+    private var catalogScope: String?
+    private var catalogSession: CoreUserSessionContext?
+    private var pendingPurchases: [String: ProviderPurchaseResult] = [:]
+    private var reconciliationTasks: [String: ReconciliationJob] = [:]
+    private var processingTransactions: Set<String> = []
+    private var checkoutReservations: [String: [String: UUID]] = [:]
+    static let stateDidChange = Notification.Name("NexusPayment.stateDidChange")
     private var subscriptionPageCallbacks: [UUID: (SubscriptionPageEvent) -> Void] = [:]
     private var activeSubscriptionPageConfig: SubscriptionPageConfig?
     private weak var subscriptionPageViewController: AnyObject?
@@ -26,13 +33,23 @@ public final class NexusPayment: @unchecked Sendable {
     private init() {}
 
     public func initialize(config: PaymentConfig) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        generation = UUID()
+        reconciliationTasks.values.forEach { $0.task.cancel() }
+        reconciliationTasks.removeAll()
+        pendingPurchases.removeAll()
+        processingTransactions.removeAll()
+        checkoutReservations.removeAll()
+        catalogScope = nil
+        catalogSession = nil
+        appStoreProvider?.stopObservingTransactions()
         self.config = config
         products.removeAll()
         apiProducts.removeAll()
         relatedProducts.removeAll()
         useTestingProducts = false
         useTestingRelatedProducts = false
-        self.orderVerificationAPI = try? OrderVerificationAPI(config: NexusCoreUser.shared.getSdkConfig())
         providers.removeAll()
         registerProvider(MockPaymentProvider())
         let appStoreProvider = AppStorePaymentProvider()
@@ -41,7 +58,9 @@ public final class NexusPayment: @unchecked Sendable {
         registerProvider(ThirdPartyPaymentProvider(channel: .stripe))
         registerProvider(ThirdPartyPaymentProvider(channel: .paypal))
         registerProvider(ThirdPartyPaymentProvider(channel: .webCheckout))
-        observeAppStoreTransactions(appStoreProvider)
+        if config.enabledChannels.contains(.appStore) {
+            observeAppStoreTransactions(appStoreProvider)
+        }
     }
 
     public func getAvailableChannels() throws -> [PaymentChannel] {
@@ -61,50 +80,84 @@ public final class NexusPayment: @unchecked Sendable {
     }
 
     public func registerProvider(_ provider: PaymentProvider) {
-        providers[provider.channel] = provider
+        locked { providers[provider.channel] = provider }
     }
 
     public func getRegisteredProviders() -> [PaymentProvider] {
-        Array(providers.values)
+        locked { Array(providers.values) }
     }
 
     public func setProductsForTesting(_ products: [Product]) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         self.products = products
         self.apiProducts = products
         self.useTestingProducts = true
     }
 
     public func setRelatedProductsForTesting(_ products: [RelatedProduct]) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         self.relatedProducts = products
         self.useTestingRelatedProducts = true
     }
 
     public func getProducts(forceRefresh: Bool = false) async throws -> [Product] {
-        if useTestingProducts { return products }
-        if !forceRefresh && !products.isEmpty { return products }
-        let loadedAPIProducts = try await getAPIProducts(forceRefresh: forceRefresh)
-        products = await enrichProductsWithAppStore(loadedAPIProducts)
-        return products
+        let operation = try await captureOperation()
+        if let cached = try locked({ () throws -> [Product]? in
+            try validate(operation)
+            return useTestingProducts || (!forceRefresh && catalogScope == operation.scope && (try? catalogSession?.validate()) != nil && !products.isEmpty) ? products : nil
+        }) { return cached }
+        let loaded = try await getAPIProducts(forceRefresh: forceRefresh, operation: operation)
+        return try await enrichProductsWithAppStore(loaded, operation: operation)
     }
 
     func getAPIProducts(forceRefresh: Bool = false) async throws -> [Product] {
-        if useTestingProducts { return apiProducts }
-        if !forceRefresh && !apiProducts.isEmpty { return apiProducts }
-        let coreConfig = try NexusCoreUser.shared.getSdkConfig()
-        apiProducts = try await ProductAPI(config: coreConfig).getProducts()
-        products = apiProducts
-        return apiProducts
+        try await getAPIProducts(forceRefresh: forceRefresh, operation: captureOperation())
     }
 
-    func enrichProductsWithAppStore(_ apiProducts: [Product]) async -> [Product] {
-        let enrichedProducts = await mergeProviderProducts(apiProducts)
-        products = enrichedProducts
-        return enrichedProducts
+    func getAPIProducts(forceRefresh: Bool, operation: PaymentOperation) async throws -> [Product] {
+        if let cached = try locked({ () throws -> [Product]? in
+            try validate(operation)
+            return useTestingProducts || (!forceRefresh && catalogScope == operation.scope && (try? catalogSession?.validate()) != nil && !apiProducts.isEmpty) ? apiProducts : nil
+        }) { return cached }
+        let loaded = try await ProductAPI { path, body in
+            try await operation.session.post(path: path, body: body)
+        }.getProducts()
+        return try locked {
+            try validate(operation)
+            catalogScope = operation.scope
+            catalogSession = operation.session
+            apiProducts = loaded
+            products = loaded
+            return loaded
+        }
+    }
+
+    func enrichProductsWithAppStore(_ apiProducts: [Product], operation: PaymentOperation) async throws -> [Product] {
+        let provider = try locked { () throws -> PaymentProvider? in
+            try validate(operation)
+            let channels = activeSubscriptionPageConfig?.paymentChannels.isEmpty == false
+                ? activeSubscriptionPageConfig!.paymentChannels : try requireConfig().enabledChannels
+            return channels.contains(.appStore) ? providers[.appStore] : nil
+        }
+        let store = try? await provider?.getProducts(productIds: apiProducts.map(\.marketProductId))
+        let enriched = ProductDetailsMerger.merge(apiProducts: apiProducts, storeProducts: store ?? [])
+        return try locked {
+            try validate(operation)
+            catalogScope = operation.scope
+            catalogSession = operation.session
+            products = enriched
+            return enriched
+        }
     }
 
     public func getRelatedProducts(forceRefresh: Bool = false) async throws -> [RelatedProduct] {
-        if useTestingRelatedProducts { return relatedProducts }
-        return try await NexusCoreUser.shared.getRelatedProducts(forceRefresh: forceRefresh)
+        let operation = try await captureOperation()
+        if let cached = locked({ useTestingRelatedProducts ? relatedProducts : nil }) { return cached }
+        let result = try await NexusCoreUser.shared.getRelatedProducts(forceRefresh: forceRefresh)
+        try validate(operation)
+        return result
     }
 
     public func mockPurchase(product: Product) async throws -> PurchaseResult {
@@ -112,88 +165,115 @@ public final class NexusPayment: @unchecked Sendable {
     }
 
     public func purchase(product: Product, channel: PaymentChannel? = nil, paymentContext: PaymentContext = PaymentContext()) async throws -> PurchaseResult {
-        let selected = try channel ?? resolvePaymentChannel(context: paymentContext).defaultChannel
-        guard let provider = providers[selected] else { throw PaymentError.providerNotRegistered("Payment provider is not registered for \(selected.rawValue)") }
-        let available = try getAvailableChannels()
-        guard available.contains(selected) || selected == .mock else { throw PaymentError.channelDisabled("Payment channel is disabled: \(selected.rawValue)") }
-        let uid: String
-        if let cachedUid = try NexusCoreUser.shared.getCurrentUser()?.uid {
-            uid = cachedUid
-        } else {
-            uid = try await NexusCoreUser.shared.silentLogin().uid
-        }
-        let providerResult = try await provider.purchase(request: PurchaseRequest(product: product, uid: uid, paymentContext: paymentContext))
-        guard providerResult.success else {
-            return PurchaseResult(channel: providerResult.channel, product: product, success: false, orderId: providerResult.orderId, message: providerResult.message)
-        }
-        guard let orderId = providerResult.orderId else {
-            throw PaymentError.apiError("Purchase succeeded without order id")
-        }
-        let verification = try await verifyProviderPurchaseIfNeeded(provider: provider, result: providerResult, uid: uid)
-        guard verification.isSuccessful else {
-            return PurchaseResult(
-                channel: providerResult.channel,
-                product: providerResult.product,
-                success: false,
-                orderId: orderId,
-                message: "Order verification status: \(verification.status.rawValue)",
-                verification: verification
-            )
-        }
-        await provider.completePurchase(providerResult)
-        let entitlement = grant(
-            product: product,
-            orderId: orderId,
-            deliveryId: deliveryId(for: providerResult),
-            channel: providerResult.channel,
-            verification: verification,
-            uid: uid
-        )
-        if let entitlement {
-            reportPurchaseRevenue(product: product, orderId: orderId, channel: providerResult.channel, verification: verification)
-            return PurchaseResult(channel: providerResult.channel, product: product, success: true, orderId: orderId, message: providerResult.message, verification: verification, entitlement: entitlement)
-        }
-        return PurchaseResult(channel: providerResult.channel, product: product, success: true, orderId: orderId, message: providerResult.message, verification: verification, entitlement: nil)
+        try await purchase(product: product, channel: channel, paymentContext: paymentContext, operation: captureOperation())
     }
 
-    public func restore(channel: PaymentChannel = .appStore) async throws -> RestoreResult {
-        guard let provider = providers[channel] else { throw PaymentError.providerNotRegistered("Payment provider is not registered for \(channel.rawValue)") }
-        let available = try getAvailableChannels()
-        guard available.contains(channel) || channel == .mock else { throw PaymentError.channelDisabled("Payment channel is disabled: \(channel.rawValue)") }
-        let result = try await provider.restore()
-        let uid = try await currentUid()
-        for purchase in result.purchases where purchase.success {
-            guard let orderId = purchase.orderId else { continue }
-            let verification = try await verifyProviderPurchaseIfNeeded(provider: provider, result: purchase, uid: uid)
-            if verification.isSuccessful {
-                await provider.completePurchase(purchase)
-                if let entitlement = grant(
-                    product: purchase.product,
-                    orderId: orderId,
-                    deliveryId: deliveryId(for: purchase),
-                    channel: purchase.channel,
-                    verification: verification,
-                    uid: uid
-                ) {
-                    reportPurchaseRevenue(product: purchase.product, orderId: orderId, channel: purchase.channel, verification: verification)
-                    _ = entitlement
+    func purchase(product: Product, channel: PaymentChannel?, paymentContext: PaymentContext = PaymentContext(), operation: PaymentOperation) async throws -> PurchaseResult {
+        try validate(operation)
+        let selected = try channel ?? resolvePaymentChannel(context: paymentContext).defaultChannel
+        let provider = try provider(for: selected, operation: operation)
+        let reservationId = UUID()
+        let reserved = try locked { () throws -> Bool in
+            try validate(operation)
+            var state = loadState(operation)
+            if let user = try? NexusCoreUser.shared.getCurrentUser() { refreshEntitlements(&state, user: user) }
+            guard !pendingProducts(state).contains(product.marketProductId),
+                  checkoutReservations[operation.storageKey]?[product.marketProductId] == nil else { return false }
+            checkoutReservations[operation.storageKey, default: [:]][product.marketProductId] = reservationId
+            return true
+        }
+        guard reserved else { return pendingResult(product: product, channel: selected) }
+        defer {
+            // Cleanup is scope- and reservation-specific, even after the session became stale.
+            locked {
+                if checkoutReservations[operation.storageKey]?[product.marketProductId] == reservationId {
+                    checkoutReservations[operation.storageKey]?.removeValue(forKey: product.marketProductId)
                 }
             }
         }
+        let storeResult: ProviderPurchaseResult
+        do {
+            try validate(operation)
+            storeResult = try await provider.purchase(request: PurchaseRequest(product: product, uid: operation.session.uid, paymentContext: paymentContext))
+        } catch {
+            try validate(operation)
+            throw error
+        }
+        if storeResult.success || storeResult.pending {
+            // A store-confirmed unresolved payment belongs to the captured scope even
+            // when its caller became stale. Never grant or finish through this path.
+            locked {
+                var state = loadState(operation)
+                state.pendingProductIds.insert(product.marketProductId)
+                saveState(state, key: operation.storageKey)
+            }
+        }
+        try validate(operation)
+        guard storeResult.success else {
+            if storeResult.pending {
+                return pendingResult(product: product, channel: selected)
+            }
+            return PurchaseResult(channel: selected, product: product, success: false, orderId: storeResult.orderId, message: storeResult.message)
+        }
+        return try await reconcile(storeResult, provider: provider, operation: operation)
+    }
+
+    public func restore(channel: PaymentChannel = .appStore) async throws -> RestoreResult {
+        try await restore(channel: channel, operation: captureOperation())
+    }
+
+    func restore(channel: PaymentChannel, operation: PaymentOperation) async throws -> RestoreResult {
+        let provider = try provider(for: channel, operation: operation)
+        var result = try await provider.restore()
+        try validate(operation)
+        for (index, purchase) in result.purchases.enumerated() {
+            do {
+                guard purchase.success || purchase.rawData["revocation_date"] != nil else { continue }
+                let reconciled = try await reconcile(purchase, provider: provider, operation: operation)
+                result.purchases[index].success = reconciled.success
+                result.purchases[index].pending = reconciled.pending
+                result.purchases[index].message = reconciled.message
+            } catch {
+                // Ownership and malformed items are item failures, never batch failures.
+                try validate(operation)
+                result.purchases[index].success = false
+                result.purchases[index].message = error.localizedDescription
+            }
+        }
+        try validate(operation)
         return result
     }
 
     public func getEntitlements() -> [Entitlement] {
-        do {
-            guard let uid = try NexusCoreUser.shared.getCurrentUser()?.uid else { return [] }
-            return Array(loadEntitlementState(uid: uid).entitlements.values)
-        } catch {
-            return []
+        locked {
+            guard let user = try? NexusCoreUser.shared.getCurrentUser(),
+                  let scope = try? storageScope() else { return [] }
+            var state = loadState(key: storageKey(scope: scope, uid: user.uid))
+            refreshEntitlements(&state, user: user)
+            saveState(state, key: storageKey(scope: scope, uid: user.uid))
+            return Array(state.entitlements.values)
         }
     }
 
+    public func getPendingProductIds() -> Set<String> {
+        locked {
+            guard let user = try? NexusCoreUser.shared.getCurrentUser(),
+                  let scope = try? storageScope() else { return [] }
+            var state = loadState(key: storageKey(scope: scope, uid: user.uid))
+            refreshEntitlements(&state, user: user)
+            return pendingProducts(state).union(checkoutReservations[storageKey(scope: scope, uid: user.uid)]?.keys.map { $0 } ?? [])
+        }
+    }
+
+    private func pendingProducts(_ state: PersistedEntitlementState) -> Set<String> {
+        state.pendingProductIds.union(state.entitlements.values.filter(\.reconciliationPending).map(\.productId))
+    }
+
     public func getWeeklyPointsInfo() async throws -> WeeklyPointsInfo {
-        try await NexusCoreUser.shared.getWeeklyPointsInfo()
+        let operation = try await captureOperation()
+        let result = try await operation.session.getWeeklyPointsInfo()
+        try validate(operation)
+        return result
     }
 
     public func getWeeklyPointsInfo(
@@ -205,32 +285,66 @@ public final class NexusPayment: @unchecked Sendable {
         }
     }
 
-    public func claimWeeklyPoints(marketProductId: String? = nil) async throws -> WeeklyPointsClaimResult {
-        let result = try await NexusCoreUser.shared.claimWeeklyPoints(marketProductId: marketProductId)
-        if result.success {
-            _ = try? await NexusCoreUser.shared.fetchUserInfo()
+    public func claimWeeklyPoints() async throws -> WeeklyPointsClaimResult {
+        try await claimWeeklyPoints(operation: captureOperation())
+    }
+
+    func claimWeeklyPoints(operation: PaymentOperation) async throws -> WeeklyPointsClaimResult {
+        try validate(operation)
+        let outcome: Result<WeeklyPointsClaimResult, Error>
+        do {
+            outcome = .success(try await operation.session.claimWeeklyPoints())
+        } catch {
+            outcome = .failure(error)
         }
-        return result
+        // Even an uncertain claim gets read-only reconciliation, never claim replay.
+        try validate(operation)
+        _ = try? await operation.session.fetchUserInfo()
+        try validate(operation)
+        _ = try? await operation.session.getWeeklyPointsInfo()
+        try validate(operation)
+        return try outcome.get()
     }
 
     public func claimWeeklyPoints(
-        marketProductId: String? = nil,
         completion: @escaping @Sendable (CoreUserResult<WeeklyPointsClaimResult>) -> Void
     ) {
         Task {
-            do { completion(.success(try await claimWeeklyPoints(marketProductId: marketProductId))) }
+            do {
+                let operation = try await captureOperation()
+                let result = try await claimWeeklyPoints(operation: operation)
+                try validate(operation)
+                completion(.success(result))
+            }
             catch { completion(.failure(error)) }
         }
     }
 
+    @available(*, deprecated, message: "The server selects the subscription; use claimWeeklyPoints()")
+    public func claimWeeklyPoints(marketProductId: String?) async throws -> WeeklyPointsClaimResult {
+        guard (marketProductId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw PaymentError.invalidConfig("Weekly claim does not accept a product id")
+        }
+        return try await claimWeeklyPoints()
+    }
+
+    @available(*, deprecated, message: "The server selects the subscription; use claimWeeklyPoints(completion:)")
+    public func claimWeeklyPoints(marketProductId: String?, completion: @escaping @Sendable (CoreUserResult<WeeklyPointsClaimResult>) -> Void) {
+        guard (marketProductId ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            completion(.failure(PaymentError.invalidConfig("Weekly claim does not accept a product id")))
+            return
+        }
+        claimWeeklyPoints(completion: completion)
+    }
+
     public func showSubscriptionPage(config: SubscriptionPageConfig) {
-        activeSubscriptionPageConfig = config
+        locked { activeSubscriptionPageConfig = config }
         dispatchSubscriptionPageEvent(pageEvent(name: .pageShow, state: .ready))
     }
 
     #if canImport(UIKit)
     public func showSubscriptionPage(presenting viewController: UIViewController, config: SubscriptionPageConfig) {
-        activeSubscriptionPageConfig = config
+        locked { activeSubscriptionPageConfig = config }
         dispatchSubscriptionPageEvent(pageEvent(name: .pageShow, state: .loading))
         let page = SubscriptionPageViewController(sdk: self, config: config)
         subscriptionPageViewController = page
@@ -247,47 +361,20 @@ public final class NexusPayment: @unchecked Sendable {
         subscriptionPageViewController = nil
         #endif
         dispatchSubscriptionPageEvent(pageEvent(name: .close, state: .cancelled))
-        activeSubscriptionPageConfig = nil
+        locked { activeSubscriptionPageConfig = nil }
     }
 
     @discardableResult
     public func onSubscriptionPageEvent(_ callback: @escaping (SubscriptionPageEvent) -> Void) -> () -> Void {
         let id = UUID()
-        subscriptionPageCallbacks[id] = callback
+        locked { subscriptionPageCallbacks[id] = callback }
         return { [weak self] in
-            self?.subscriptionPageCallbacks.removeValue(forKey: id)
+            _ = self?.locked { self?.subscriptionPageCallbacks.removeValue(forKey: id) }
         }
     }
 
-    private func mergeProviderProducts(_ apiProducts: [Product]) async -> [Product] {
-        guard !apiProducts.isEmpty else { return [] }
-        guard let paymentConfig = config else { return apiProducts }
-        let requestedChannels = activeSubscriptionPageConfig?.paymentChannels.isEmpty == false
-            ? activeSubscriptionPageConfig!.paymentChannels
-            : paymentConfig.enabledChannels
-        guard requestedChannels.contains(.appStore) else { return apiProducts }
-        guard let provider = appStoreProvider else {
-            return apiProducts
-        }
-        do {
-            let providerProducts = try await provider.getProducts(productIds: apiProducts.map(\.marketProductId))
-            guard !providerProducts.isEmpty else {
-                return apiProducts
-            }
-            return ProductDetailsMerger.merge(apiProducts: apiProducts, storeProducts: providerProducts)
-        } catch {
-            return apiProducts
-        }
-    }
-
-    private func currentUid() async throws -> String {
-        if let cachedUid = try NexusCoreUser.shared.getCurrentUser()?.uid {
-            return cachedUid
-        }
-        return try await NexusCoreUser.shared.silentLogin().uid
-    }
-
-    private func verifyProviderPurchaseIfNeeded(provider: PaymentProvider, result: ProviderPurchaseResult, uid: String) async throws -> OrderVerificationResult {
+    private func verifyProviderPurchaseIfNeeded(provider: PaymentProvider, result: ProviderPurchaseResult, operation: PaymentOperation) async throws -> OrderVerificationResult {
+        try validate(operation)
         guard provider.requiresServerVerification else {
             return OrderVerificationResult(
                 tradeOrderId: result.orderId ?? "",
@@ -295,28 +382,23 @@ public final class NexusPayment: @unchecked Sendable {
                 isSubscription: result.isSubscription,
                 token: result.purchaseToken,
                 platformProductId: result.platformProductId,
-                startedTime: Int64(Date().timeIntervalSince1970 * 1000),
+                startedTime: Int64(Date().timeIntervalSince1970),
                 endsTime: nil,
                 successCount: nil,
                 amount: nil
             )
         }
-        guard let token = result.purchaseToken, !token.isEmpty else {
-            throw PaymentError.apiError("Purchase token is required for server verification")
-        }
-        guard let orderId = result.orderId, !orderId.isEmpty else {
-            throw PaymentError.apiError("Order id is required for server verification")
-        }
-        guard let orderVerificationAPI else {
-            throw PaymentError.apiError("Order verification API is not available; initialize CoreUserSDK before PaymentSDK")
+        let orderVerificationAPI = OrderVerificationAPI { path, body in
+            try await operation.session.post(path: path, body: body)
         }
         return try await orderVerificationAPI.verify(
             channel: result.channel,
-            token: token,
+            token: result.purchaseToken ?? "",
             platformProductId: result.platformProductId,
-            uid: uid,
             isSubscription: result.isSubscription,
-            tradeOrderId: orderId
+            tradeOrderId: result.orderId ?? "",
+            originalTransactionId: result.rawData["original_transaction_id"].map { String(describing: $0.value) },
+            expectedUid: operation.session.uid
         )
     }
 
@@ -325,11 +407,11 @@ public final class NexusPayment: @unchecked Sendable {
         _ = try? NexusGrowthAnalyticsAd.shared.reportPurchaseRevenue(PurchaseRevenuePayload(
             paymentChannel: growthPaymentChannel(channel),
             orderId: orderId,
-            transactionId: verification.token,
+            transactionId: verification.tradeOrderId,
             storeProductId: product.marketProductId,
             purchaseType: product.productType == .subscription ? .subscription : .oneTime,
             subscriptionPeriod: product.subscriptionPeriod,
-            currency: product.currency ?? "USD",
+            currency: verification.currency ?? product.currency ?? "USD",
             revenue: Double(verification.amount ?? product.price ?? "") ?? 0
         ))
     }
@@ -345,115 +427,270 @@ public final class NexusPayment: @unchecked Sendable {
         }
     }
 
-    private func grant(
-        product: Product,
-        orderId: String,
-        deliveryId: String,
-        channel: PaymentChannel,
-        verification: OrderVerificationResult?,
-        uid: String
-    ) -> Entitlement? {
-        entitlementLock.lock()
-        defer { entitlementLock.unlock() }
-        var state = loadEntitlementStateUnlocked(uid: uid)
-        guard state.deliveredOrderIds.insert(deliveryId).inserted else { return nil }
-        let entitlement = Entitlement(
-            entitlementId: product.entitlementId ?? product.marketProductId,
-            productId: product.marketProductId,
-            orderId: orderId,
-            channel: channel,
-            startedTime: verification?.startedTime,
-            endsTime: verification?.endsTime,
-            active: verification?.isSuccessful ?? true
-        )
-        state.entitlements[entitlement.entitlementId] = entitlement
-        saveEntitlementStateUnlocked(state, uid: uid)
-        return entitlement
-    }
-
-    private func revoke(product: Product, orderId: String, channel: PaymentChannel, verification: OrderVerificationResult?, uid: String) {
-        entitlementLock.lock()
-        defer { entitlementLock.unlock() }
-        var state = loadEntitlementStateUnlocked(uid: uid)
-        let entitlementId = product.entitlementId ?? product.marketProductId
-        state.entitlements[entitlementId] = Entitlement(
-            entitlementId: entitlementId,
-            productId: product.marketProductId,
-            orderId: orderId,
-            channel: channel,
-            startedTime: verification?.startedTime,
-            endsTime: verification?.endsTime,
-            active: false
-        )
-        saveEntitlementStateUnlocked(state, uid: uid)
-    }
-
-    private func observeAppStoreTransactions(_ provider: AppStorePaymentProvider) {
-        provider.observeTransactions { [weak self] providerResult in
-            guard let self else { return false }
-            do {
-                let uid = try await self.currentUid()
-                guard let orderId = providerResult.orderId else { return false }
-                let verification = try await self.verifyProviderPurchaseIfNeeded(provider: provider, result: providerResult, uid: uid)
-                if verification.isSuccessful {
-                    if let entitlement = self.grant(
-                        product: providerResult.product,
-                        orderId: orderId,
-                        deliveryId: self.deliveryId(for: providerResult),
-                        channel: providerResult.channel,
-                        verification: verification,
-                        uid: uid
-                    ) {
-                        self.reportPurchaseRevenue(product: providerResult.product, orderId: orderId, channel: providerResult.channel, verification: verification)
-                        _ = entitlement
-                    }
-                    return true
-                } else if verification.status == .cancelled || verification.status == .refunded || !providerResult.success {
-                    self.revoke(
-                        product: providerResult.product,
-                        orderId: orderId,
-                        channel: providerResult.channel,
-                        verification: verification,
-                        uid: uid
-                    )
-                    self.dispatchSubscriptionPageEvent(SubscriptionPageEvent(
-                        name: .purchaseFailed,
-                        productId: providerResult.product.marketProductId,
-                        paymentChannel: providerResult.channel,
-                        state: .failed,
-                        params: ["order_id": orderId, "status": verification.status.rawValue, "message": providerResult.message]
-                    ))
-                    return true
-                }
-                return false
-            } catch {
-                self.dispatchSubscriptionPageEvent(SubscriptionPageEvent(
-                    name: .purchaseFailed,
-                    productId: providerResult.product.marketProductId,
-                    paymentChannel: providerResult.channel,
-                    state: .failed,
-                    params: ["message": error.localizedDescription]
-                ))
-                return false
+    private func checkOwner(_ purchase: ProviderPurchaseResult, operation: PaymentOperation) throws {
+        try validate(operation)
+        if purchase.channel == .appStore {
+            guard let owner = purchase.rawData["owner_uid"]?.value as? String,
+                  let expected = AppStorePaymentProvider.accountToken(uid: operation.session.uid),
+                  expected == UUID(uuidString: owner) else {
+                throw PaymentError.apiError("App Store transaction does not belong to the current account")
             }
         }
     }
 
+    private func pendingResult(product: Product, channel: PaymentChannel, orderId: String? = nil,
+                               verification: OrderVerificationResult? = nil) -> PurchaseResult {
+        PurchaseResult(channel: channel, product: product, success: false, orderId: orderId,
+                       message: "Payment is pending confirmation. Do not purchase again.",
+                       verification: verification, pending: true)
+    }
+
+    private func reconcile(_ purchase: ProviderPurchaseResult, provider: PaymentProvider,
+                           operation: PaymentOperation, scheduleRetry: Bool = true) async throws -> PurchaseResult {
+        try checkOwner(purchase, operation: operation)
+        let key = pendingKey(purchase, operation)
+        guard locked({ processingTransactions.insert(key).inserted }) else {
+            return pendingResult(product: purchase.product, channel: purchase.channel, orderId: purchase.orderId)
+        }
+        defer { locked { if generation == operation.generation { processingTransactions.remove(key) } } }
+        try updateState(operation) { state in
+            state.pendingProductIds.insert(purchase.platformProductId)
+            pendingPurchases[key] = purchase
+        }
+        let verification: OrderVerificationResult
+        do {
+            guard purchase.orderId != nil else { throw PaymentError.apiError("Missing store order id") }
+            verification = try await verifyProviderPurchaseIfNeeded(provider: provider, result: purchase, operation: operation)
+        } catch {
+            try validate(operation)
+            if scheduleRetry { scheduleReconciliation(operation) }
+            return pendingResult(product: purchase.product, channel: purchase.channel, orderId: purchase.orderId)
+        }
+        try validate(operation)
+        guard verification.isSuccessful || verification.isTerminal else {
+            if scheduleRetry { scheduleReconciliation(operation) }
+            return pendingResult(product: purchase.product, channel: purchase.channel,
+                                 orderId: purchase.orderId, verification: verification)
+        }
+        // Revoked or unverified store transactions cannot be finished or granted as paid.
+        let paid = verification.isSuccessful && purchase.success
+        if verification.isSuccessful && !paid {
+            return pendingResult(product: purchase.product, channel: purchase.channel, orderId: purchase.orderId)
+        }
+        var user: SDKUser?
+        if provider.requiresServerVerification {
+            user = try? await operation.session.fetchUserInfo()
+            try validate(operation)
+        }
+        let entitlementId = purchase.product.entitlementId ?? purchase.platformProductId
+        var entitlement = Entitlement(entitlementId: entitlementId, productId: purchase.platformProductId,
+            orderId: purchase.orderId ?? "", channel: purchase.channel,
+            startedTime: verification.startedTime, endsTime: verification.endsTime, active: paid)
+        if purchase.isSubscription && provider.requiresServerVerification {
+            entitlement.active = paid && authoritativeVIP(user) && !hasExpired(entitlement.endsTime)
+            entitlement.reconciliationPending = paid && !entitlement.active
+        }
+        let recordedEntitlement = entitlement
+        var newDelivery = false
+        try updateState(operation) { state in
+            newDelivery = paid && state.deliveredOrderIds.insert(deliveryId(for: purchase)).inserted
+            if purchase.isSubscription && provider.requiresServerVerification {
+                state.serverSubscriptionIds.insert(entitlementId)
+                recordSubscription(purchase, entitlement: recordedEntitlement, terminal: verification.isTerminal,
+                                   state: &state, user: user)
+            } else {
+                state.entitlements[entitlementId] = recordedEntitlement
+            }
+            pendingPurchases.removeValue(forKey: key)
+            // Another unresolved renewal of this SKU must continue to block checkout.
+            if !pendingPurchases.contains(where: { $0.key.hasPrefix(operation.storageKey + ".") && $0.value.platformProductId == purchase.platformProductId }) {
+                state.pendingProductIds.remove(purchase.platformProductId)
+            }
+        }
+        // Persist the verified delivery before finishing so interruption cannot strand
+        // a pending marker after StoreKit has removed its only recoverable transaction.
+        if paid {
+            try validate(operation)
+            await provider.completePurchase(purchase)
+            try validate(operation)
+        }
+        if newDelivery {
+            try validate(operation)
+            reportPurchaseRevenue(product: purchase.product, orderId: purchase.orderId ?? "", channel: purchase.channel, verification: verification)
+        }
+        if entitlement.reconciliationPending && scheduleRetry { scheduleReconciliation(operation) }
+        return PurchaseResult(channel: purchase.channel, product: purchase.product, success: paid,
+                              orderId: purchase.orderId, message: "Order verification status: \(verification.status.rawValue)",
+                              verification: verification, entitlement: newDelivery ? entitlement : nil)
+    }
+
+    /// Read-only retries of already-paid transactions and delayed membership maintenance.
+    public func reconcilePendingPurchases() async throws {
+        try await reconcilePendingPurchases(operation: captureOperation())
+    }
+
+    private func reconcilePendingPurchases(operation: PaymentOperation) async throws {
+        try validate(operation)
+        let pending = locked { pendingPurchases.filter { $0.key.hasPrefix(operation.storageKey + ".") }.map(\.value) }
+        for purchase in pending {
+            let provider = try provider(for: purchase.channel, operation: operation)
+            _ = try await reconcile(purchase, provider: provider, operation: operation, scheduleRetry: false)
+        }
+        try validate(operation)
+        let user = try? await operation.session.fetchUserInfo()
+        try validate(operation)
+        if let user { try updateState(operation) { refreshEntitlements(&$0, user: user) } }
+    }
+
+    private func scheduleReconciliation(_ operation: PaymentOperation) {
+        locked {
+            guard (try? validate(operation)) != nil else { return }
+            if let existing = reconciliationTasks[operation.storageKey] {
+                if (try? existing.session.validate()) != nil { return }
+                existing.task.cancel()
+            }
+            let jobId = UUID()
+            let task = Task { [weak self] in
+                defer { self?.locked {
+                    if self?.reconciliationTasks[operation.storageKey]?.id == jobId {
+                        self?.reconciliationTasks.removeValue(forKey: operation.storageKey)
+                    }
+                } }
+                for delay in [1, 3, 10] {
+                    do {
+                        try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000_000)
+                        guard let self else { return }
+                        try self.validate(operation)
+                        try await self.reconcilePendingPurchases(operation: operation)
+                    } catch { return }
+                }
+            }
+            reconciliationTasks[operation.storageKey] = ReconciliationJob(id: jobId, session: operation.session, task: task)
+        }
+    }
+
+    private func authoritativeVIP(_ user: SDKUser?) -> Bool {
+        guard let user, user.userInfoSynced, user.isVip else { return false }
+        return user.vipExpiredAt > Int64(Date().timeIntervalSince1970)
+    }
+
+    private func hasExpired(_ seconds: Int64?) -> Bool {
+        seconds.map { $0 <= Int64(Date().timeIntervalSince1970) } ?? false
+    }
+
+    private func recordSubscription(_ purchase: ProviderPurchaseResult, entitlement: Entitlement, terminal: Bool,
+                                    state: inout PersistedEntitlementState, user: SDKUser?) {
+        let id = entitlement.entitlementId
+        let originalId = purchase.rawData["original_transaction_id"].map { String(describing: $0.value) }
+        let chainId = purchase.channel.rawValue + ":" + (originalId ?? purchase.orderId ?? deliveryId(for: purchase))
+        var chains = state.subscriptionChains?[id] ?? [:]
+        // Preserve pre-chain cache entries until verified store recovery identifies them.
+        if chains.isEmpty, let previous = state.entitlements[id] {
+            chains["legacy:" + previous.orderId] = SubscriptionChainState(
+                transactionId: previous.orderId, transactionTime: previous.startedTime,
+                entitlement: previous, terminal: state.revokedEntitlementIds.contains(id))
+        }
+        chains.removeValue(forKey: "legacy:" + entitlement.orderId)
+        let date = (purchase.rawData["purchase_date"]?.value as? TimeInterval).map { Int64($0) }
+        let incoming = SubscriptionChainState(transactionId: deliveryId(for: purchase),
+            transactionTime: date ?? entitlement.startedTime, entitlement: entitlement, terminal: terminal)
+        if let previous = chains[chainId] {
+            if previous.transactionId == incoming.transactionId {
+                // A replayed paid callback cannot undo a known terminal decision for that delivery.
+                if !previous.terminal || incoming.terminal { chains[chainId] = incoming }
+            } else if subscriptionOrder(previous, precedes: incoming) {
+                chains[chainId] = incoming
+            }
+        } else {
+            chains[chainId] = incoming
+        }
+        if state.subscriptionChains == nil { state.subscriptionChains = [:] }
+        state.subscriptionChains?[id] = chains
+        state.revokedEntitlementIds.remove(id)
+        selectSubscription(id, state: &state, user: user)
+    }
+
+    private func subscriptionOrder(_ left: SubscriptionChainState, precedes right: SubscriptionChainState) -> Bool {
+        if left.transactionTime != right.transactionTime {
+            return (left.transactionTime ?? Int64.min) < (right.transactionTime ?? Int64.min)
+        }
+        if left.entitlement.endsTime != right.entitlement.endsTime {
+            return (left.entitlement.endsTime ?? Int64.min) < (right.entitlement.endsTime ?? Int64.min)
+        }
+        // Stable tie break only; callback arrival order never determines the current chain.
+        return left.transactionId.compare(right.transactionId, options: .numeric) == .orderedAscending
+    }
+
+    private func selectSubscription(_ id: String, state: inout PersistedEntitlementState, user: SDKUser?) {
+        guard let chains = state.subscriptionChains?[id], !chains.isEmpty else { return }
+        let eligible = chains.filter { !$0.value.terminal && !hasExpired($0.value.entitlement.endsTime) }
+        let candidates = eligible.isEmpty ? chains : eligible
+        guard let selected = candidates.max(by: {
+            if subscriptionOrder($0.value, precedes: $1.value) { return true }
+            if subscriptionOrder($1.value, precedes: $0.value) { return false }
+            return $0.key < $1.key
+        }) else { return }
+        var entitlement = selected.value.entitlement
+        entitlement.active = !selected.value.terminal && !hasExpired(entitlement.endsTime) && authoritativeVIP(user)
+        if entitlement.active || selected.value.terminal || hasExpired(entitlement.endsTime) {
+            entitlement.reconciliationPending = false
+        }
+        state.subscriptionChains?[id]?[selected.key]?.entitlement = entitlement
+        state.entitlements[id] = entitlement
+    }
+
+    private func refreshEntitlements(_ state: inout PersistedEntitlementState, user: SDKUser) {
+        for id in state.serverSubscriptionIds {
+            if state.subscriptionChains?[id]?.isEmpty == false {
+                selectSubscription(id, state: &state, user: user)
+                continue
+            }
+            guard var entitlement = state.entitlements[id] else { continue }
+            entitlement.active = !state.revokedEntitlementIds.contains(id) && authoritativeVIP(user) && !hasExpired(entitlement.endsTime)
+            if entitlement.active || hasExpired(entitlement.endsTime) || state.revokedEntitlementIds.contains(id) {
+                entitlement.reconciliationPending = false
+            }
+            state.entitlements[id] = entitlement
+        }
+    }
+
+    private func observeAppStoreTransactions(_ provider: AppStorePaymentProvider) {
+        let observedGeneration = generation
+        provider.observeTransactions { [weak self] result in
+            guard let self else { return false }
+            do {
+                _ = try await self.handleTransactionUpdate(result, provider: provider, observedGeneration: observedGeneration)
+            } catch { /* Keep foreign, stale, and unverified transactions unfinished. */ }
+            // Reconciliation owns finishing, shared with purchase and restore.
+            return false
+        }
+    }
+
+    func handleTransactionUpdate(_ result: ProviderPurchaseResult, provider: PaymentProvider,
+                                 observedGeneration: UUID) async throws -> PurchaseResult {
+        let operation = try await captureOperation()
+        guard operation.generation == observedGeneration else { throw CoreUserError.sessionChanged }
+        return try await reconcile(result, provider: provider, operation: operation)
+    }
+
     func dispatchSubscriptionPageEvent(_ event: SubscriptionPageEvent) {
-        subscriptionPageCallbacks.values.forEach { $0(event) }
+        let callbacks = locked { Array(subscriptionPageCallbacks.values) }
+        callbacks.forEach { $0(event) }
         if NexusGrowthAnalyticsAd.shared.isInitialized() {
             _ = try? NexusGrowthAnalyticsAd.shared.reportPurchaseEvent(event.name.rawValue, payload: event.analyticsParams())
         }
     }
 
     private func requireConfig() throws -> PaymentConfig {
-        guard let config else { throw PaymentError.notInitialized }
-        return config
+        try locked {
+            guard let config else { throw PaymentError.notInitialized }
+            return config
+        }
     }
 
     func subscriptionPageWasDismissed() {
         subscriptionPageViewController = nil
-        activeSubscriptionPageConfig = nil
+        locked { activeSubscriptionPageConfig = nil }
     }
 
     func deliveryId(for result: ProviderPurchaseResult) -> String {
@@ -469,26 +706,86 @@ public final class NexusPayment: @unchecked Sendable {
         return result.orderId ?? result.purchaseToken ?? result.platformProductId
     }
 
-    private func loadEntitlementState(uid: String) -> PersistedEntitlementState {
-        entitlementLock.lock()
-        defer { entitlementLock.unlock() }
-        return loadEntitlementStateUnlocked(uid: uid)
+    private func locked<T>(_ operation: () throws -> T) rethrows -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return try operation()
     }
 
-    private func loadEntitlementStateUnlocked(uid: String) -> PersistedEntitlementState {
-        guard let data = UserDefaults.standard.data(forKey: entitlementStorageKey(uid: uid)),
+    func captureOperation() async throws -> PaymentOperation {
+        let (capturedGeneration, scope) = try locked { (generation, try storageScope()) }
+        let session = try await NexusCoreUser.shared.captureAuthenticatedSession()
+        let operation = PaymentOperation(generation: capturedGeneration, scope: scope, session: session,
+                                         storageKey: storageKey(scope: scope, uid: session.uid))
+        try validate(operation)
+        return operation
+    }
+
+    func validate(_ operation: PaymentOperation) throws {
+        try locked {
+            guard generation == operation.generation, try storageScope() == operation.scope else { throw CoreUserError.sessionChanged }
+            try operation.session.validate()
+        }
+    }
+
+    private func provider(for channel: PaymentChannel, operation: PaymentOperation) throws -> PaymentProvider {
+        try locked {
+            try validate(operation)
+            guard try requireConfig().enabledChannels.contains(channel) || channel == .mock else {
+                throw PaymentError.channelDisabled("Payment channel is disabled: \(channel.rawValue)")
+            }
+            guard let provider = providers[channel] else {
+                throw PaymentError.providerNotRegistered("Payment provider is not registered for \(channel.rawValue)")
+            }
+            return provider
+        }
+    }
+
+    private func storageScope() throws -> String {
+        let payment = try requireConfig()
+        let core = try NexusCoreUser.shared.getSdkConfig()
+        return try JSONEncoder().encode([core.apiBaseUrl, core.productId, payment.productId]).base64EncodedString()
+    }
+
+    private func storageKey(scope: String, uid: String) -> String {
+        "nexus.payment.v2.\(scope).\(Data(uid.utf8).base64EncodedString())"
+    }
+
+    private func pendingKey(_ purchase: ProviderPurchaseResult, _ operation: PaymentOperation) -> String {
+        operation.storageKey + "." + purchase.channel.rawValue + "." + deliveryId(for: purchase)
+    }
+
+    private func loadState(_ operation: PaymentOperation) -> PersistedEntitlementState {
+        loadState(key: operation.storageKey)
+    }
+
+    private func loadState(key: String) -> PersistedEntitlementState {
+        guard let data = UserDefaults.standard.data(forKey: key),
               let state = try? JSONDecoder().decode(PersistedEntitlementState.self, from: data)
         else { return PersistedEntitlementState() }
         return state
     }
 
-    private func saveEntitlementStateUnlocked(_ state: PersistedEntitlementState, uid: String) {
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        UserDefaults.standard.set(data, forKey: entitlementStorageKey(uid: uid))
+    private func saveState(_ state: PersistedEntitlementState, _ operation: PaymentOperation) {
+        saveState(state, key: operation.storageKey)
+        Task { @MainActor [weak self] in
+            guard let self, (try? self.validate(operation)) != nil else { return }
+            NotificationCenter.default.post(name: Self.stateDidChange, object: self)
+        }
     }
 
-    private func entitlementStorageKey(uid: String) -> String {
-        "nexus.payment.\(config?.productId ?? "unknown").entitlements.\(uid)"
+    private func saveState(_ state: PersistedEntitlementState, key: String) {
+        guard let data = try? JSONEncoder().encode(state) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private func updateState(_ operation: PaymentOperation, _ update: (inout PersistedEntitlementState) -> Void) throws {
+        try locked {
+            try validate(operation)
+            var state = loadState(operation)
+            update(&state)
+            saveState(state, operation)
+        }
     }
 
     private func pageEvent(
@@ -499,7 +796,7 @@ public final class NexusPayment: @unchecked Sendable {
         params: [String: Any?] = [:]
     ) -> SubscriptionPageEvent {
         var values = params
-        if let config = activeSubscriptionPageConfig {
+        if let config = locked({ activeSubscriptionPageConfig }) {
             values["template_id"] = config.templateId
             values["scene"] = config.scene
         }
@@ -544,99 +841,92 @@ public final class NexusPayment: @unchecked Sendable {
 private struct PersistedEntitlementState: Codable {
     var deliveredOrderIds: Set<String> = []
     var entitlements: [String: Entitlement] = [:]
+    var pendingProductIds: Set<String> = []
+    var serverSubscriptionIds: Set<String> = []
+    var revokedEntitlementIds: Set<String> = []
+    var subscriptionChains: [String: [String: SubscriptionChainState]]?
 }
 
-final class ProductAPI: @unchecked Sendable {
-    private let config: CoreUserConfig
-    private let session: URLSession
+private struct SubscriptionChainState: Codable {
+    let transactionId: String
+    let transactionTime: Int64?
+    var entitlement: Entitlement
+    let terminal: Bool
+}
 
-    init(config: CoreUserConfig, session: URLSession = .shared) {
-        self.config = config
-        self.session = session
+struct PaymentOperation: Sendable {
+    let generation: UUID
+    let scope: String
+    let session: CoreUserSessionContext
+    let storageKey: String
+}
+
+private struct ReconciliationJob {
+    let id: UUID
+    let session: CoreUserSessionContext
+    let task: Task<Void, Never>
+}
+
+final class ProductAPI: Sendable {
+    private let post: AuthenticatedPaymentPost
+
+    init(post: @escaping AuthenticatedPaymentPost = { path, body in
+        try await NexusCoreUser.shared.postAuthenticated(path: path, body: body)
+    }) {
+        self.post = post
     }
 
     func getProducts() async throws -> [Product] {
-        guard let url = URL(string: config.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/m/v7/iap/list") else {
-            throw PaymentError.invalidConfig("Invalid apiBaseUrl")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(config.productName, forHTTPHeaderField: "Product")
-        request.setValue(config.encrypt ? "1" : "0", forHTTPHeaderField: "Encrypt")
-        if !config.encrypt { request.setValue(config.productId, forHTTPHeaderField: "ProductId") }
-        request.httpBody = try APIRequestEncryption.prepareBody("{}", config: config, encrypt: config.encrypt)
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-        let body = try APIRequestEncryption.readResponse(data, config: config, encrypt: config.encrypt)
-        guard (200..<300).contains(status) else { throw PaymentError.apiError("HTTP \(status): \(body)") }
-        return try ProductParser.parse(body)
+        try ProductParser.parse(await post("/api/v1/iap/products", Data("{}".utf8)))
     }
 }
 
 enum ProductParser {
     static func parse(_ body: String) throws -> [Product] {
-        let root = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] ?? [:]
-        if let code = int(root["code"]), code != 1 {
-            throw PaymentError.apiError(root["message"] as? String ?? "Get products failed")
-        }
-        let data = root["data"] as? [String: Any]
-        let list = data?["list"] as? [[String: Any]] ?? root["list"] as? [[String: Any]] ?? root["data"] as? [[String: Any]] ?? []
-        return list.compactMap { item in
-            guard let id = string(item["market_product_id"]), !id.isEmpty else { return nil }
-            let coinsGranted = double(item["coins_granted"])
-            return Product(
-                marketProductId: id,
-                name: string(item["name"]) ?? "",
-                description: string(item["description"]) ?? "",
-                productType: type(int(item["product_type"]), coinsGranted: coinsGranted),
-                coinsGranted: coinsGranted,
-                price: string(item["price"]),
-                currency: string(item["currency"]),
-                localizedPrice: string(item["localized_price"]),
-                subscriptionPeriod: string(item["subscription_period"]),
-                trialPeriod: string(item["trial_period"]),
-                hasTrial: bool(item["has_trial"]),
-                entitlementId: string(item["entitlement_id"]),
-                benefits: item["benefits"] as? [String] ?? [],
-                weeklyPointsEnabled: int(item["weekly_points_enabled"]) == 1,
-                weeklyPoints: int(item["weekly_points"]) ?? 0
-            )
-        }
+        try parse(Data(body.utf8))
     }
 
-    private static func type(_ value: Int?, coinsGranted: Double?) -> ProductType {
-        switch value {
-        case 1: (coinsGranted ?? 0) > 0 ? .consumable : .iap
-        case 2: .subscription
-        default: .unknown
-        }
+    static func parse(_ data: Data) throws -> [Product] {
+        // Decode Decimal directly from JSON bytes, never through Double/JSONSerialization.
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return response.list.enumerated()
+            .filter { !$0.element.market_product_id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted {
+                let lhs = $0.element.sort ?? 0
+                let rhs = $1.element.sort ?? 0
+                return lhs == rhs ? $0.offset < $1.offset : lhs < rhs
+            }
+            .map { _, item in
+                let coins = item.coins_granted ?? 0
+                let type: ProductType = item.product_type == 2 ? .subscription
+                    : item.product_type == 1 ? (coins > 0 ? .consumable : .iap) : .unknown
+                return Product(
+                    marketProductId: item.market_product_id,
+                    name: item.name ?? "",
+                    description: item.description ?? "",
+                    productType: type,
+                    weeklyPointsEnabled: item.weekly_points_enabled == 1,
+                    coinsGrantedDecimal: coins,
+                    weeklyPointsDecimal: item.weekly_points ?? 0,
+                    priceUsd: item.price_usd,
+                    sort: item.sort ?? 0
+                )
+            }
     }
 
-    private static func string(_ value: Any?) -> String? {
-        if let value = value as? String { return value }
-        if let value { return "\(value)" }
-        return nil
+    private struct Response: Decodable {
+        let list: [Item]
     }
 
-    private static func int(_ value: Any?) -> Int? {
-        if let value = value as? Int { return value }
-        if let value = value as? NSNumber { return value.intValue }
-        if let value = value as? String { return Int(value) }
-        return nil
-    }
-
-    private static func double(_ value: Any?) -> Double? {
-        if let value = value as? Double { return value }
-        if let value = value as? NSNumber { return value.doubleValue }
-        if let value = value as? String { return Double(value) }
-        return nil
-    }
-
-    private static func bool(_ value: Any?) -> Bool {
-        if let value = value as? Bool { return value }
-        if let value = value as? NSNumber { return value.boolValue }
-        if let value = value as? String { return value == "1" || value.lowercased() == "true" }
-        return false
+    private struct Item: Decodable {
+        let market_product_id: String
+        let name: String?
+        let description: String?
+        let product_type: Int?
+        let coins_granted: Decimal?
+        let weekly_points_enabled: Int?
+        let weekly_points: Decimal?
+        let price_usd: Int?
+        let sort: Int?
     }
 }

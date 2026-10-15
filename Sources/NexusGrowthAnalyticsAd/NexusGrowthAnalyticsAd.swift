@@ -6,7 +6,7 @@ import UIKit
 
 public final class NexusGrowthAnalyticsAd: @unchecked Sendable {
     public static let shared = NexusGrowthAnalyticsAd()
-    public static let version = "0.0.16"
+    public static let version = "0.1.0"
 
     private var config: AnalyticsConfig?
     private var currentUser: SDKUser?
